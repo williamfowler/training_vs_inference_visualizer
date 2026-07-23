@@ -1,0 +1,39 @@
+{
+  "steps": [
+    {
+      "id": "same-hardware",
+      "title": "Same hardware, different job",
+      "bodyHtml": "Identical racks, identical cables — but now all 64 GPUs serve <b>one job</b>. The cluster is carved by <b>3D parallelism</b>: 4 <b>data-parallel replicas</b> (one per row of nodes), each replica's model split into <b>pipeline stages</b> spanning its left node and its right node, and each stage sharded <b>4-way tensor-parallel</b> within a row. Replica 0 is the top pair of nodes; replica 3 the bottom pair. In inference these pools had different jobs; in training the left/right split is just pipeline depth. The storage tier now holds checkpoints and training data.",
+      "highlight": { "servers": ["A0","A1","A2","A3","B0","B1","B2","B3"], "actors": ["poolA","poolB","storage","router","user"], "kinds": [] },
+      "pauseTraffic": false
+    },
+    {
+      "id": "waves",
+      "title": "Forward and backward waves",
+      "bodyHtml": "Each step begins with the <b>forward pass</b>: <span class=\"kw-pp\">activations sweep left→right</span> through every replica's pipeline, stage by stage, while each active row burns with <span class=\"kw-tp\">TP shimmer</span>. Then the wave reverses: the <b>backward pass</b> sweeps right→left, a little slower, computing gradients. Notice what inference never had: all four replicas move <b>in near-lockstep</b>. They aren't communicating with each other yet — but they are marching to the same drum, because at the end of every step they must meet.",
+      "highlight": { "linkClasses": ["nvlink", "fabric-pp"], "links": ["ip-0","ip-1","ip-2","ip-3"], "servers": ["A0","A1","A2","A3","B0","B1","B2","B3"], "kinds": ["tp-allreduce", "pp-activation"] },
+      "pauseTraffic": false
+    },
+    {
+      "id": "allreduce",
+      "title": "The gradient all-reduce",
+      "bodyHtml": "Here is the meeting. Once backward finishes, every replica holds gradients for the <b>same weights</b>, computed on different data — and they must be averaged before anyone can proceed. The <span class=\"kw-grad\">red-orange flash</span> is the <b>gradient all-reduce</b>: every inter-replica link, lit <b>simultaneously and in both directions</b>. It is global — all 64 GPUs participate. It is synchronous — nobody starts the next step until it completes. And it is the single loudest thing this datacenter's fabric ever does, once per step, every step, for months.",
+      "highlight": { "linkClasses": ["fabric-interpool"], "kinds": ["grad-allreduce", "weight-update"] },
+      "pauseTraffic": false
+    },
+    {
+      "id": "heartbeat",
+      "title": "The heartbeat",
+      "bodyHtml": "Look at the rhythm strip: a <b>metronomic comb</b>. Forward hum, backward hum, all-reduce spike — one heartbeat per global step. Could an operator hide it? Not cheaply. The cadence <b>is</b> the synchronization: every GPU-second spent idle between steps is wasted money, so training runs are tuned to keep the loop tight and regular. Smearing the spikes means overlapping or delaying gradient exchange, and past a point that costs convergence or throughput. The rhythm is not decoration — it is the mathematical structure of synchronous SGD, made audible in the cable plant.",
+      "highlight": { "actors": ["rhythm"], "kinds": ["grad-allreduce", "tp-allreduce", "pp-activation", "weight-update", "checkpoint"] },
+      "pauseTraffic": false
+    },
+    {
+      "id": "compare",
+      "title": "Compare the signatures",
+      "bodyHtml": "Toggle between <b>Inference</b> and <b>Training</b> and watch the rhythm strip: your previous mode stays visible as a <b>gray ghost</b> for direct comparison. Inference: ragged, uncoordinated noise. Training: a periodic comb you could set a watch by. Same GPUs, same links — the difference is pure <b>communication structure</b>, and it is visible in aggregate traffic alone, without reading a single byte. That observable distinction is what makes workload verification arguments possible. Before you go, read <a href=\"#\" data-lies>what this animation lies about</a> — the simplifications matter.",
+      "highlight": { "actors": ["rhythm"], "kinds": ["grad-allreduce", "tp-allreduce", "pp-activation", "weight-update", "checkpoint", "kv-transfer", "kv-storage", "token-return", "request"] },
+      "pauseTraffic": false
+    }
+  ]
+}

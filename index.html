@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>comms-viz — Datacenter Communication Patterns: Training vs. Inference</title>
+<meta name="description" content="Interactive visualization of GPU-to-GPU data flow in a frontier AI datacenter: disaggregated inference vs. 3D-parallel training.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header id="topbar">
+    <div id="brand">comms-viz</div>
+    <div id="mode-toggle" role="tablist" aria-label="Workload mode">
+      <button id="btn-mode-inference" class="mode-btn active" role="tab" aria-selected="true">Inference</button>
+      <button id="btn-mode-training" class="mode-btn" role="tab" aria-selected="false">Training</button>
+    </div>
+    <div id="transport">
+      <button id="btn-play" class="ctrl-btn" title="Play/pause (space)">⏸</button>
+      <label id="speed-wrap">
+        <span id="speed-label">1.0×</span>
+        <input id="speed" type="range" min="-2" max="2" step="0.05" value="0" title="Speed">
+      </label>
+    </div>
+    <div id="topbar-right">
+      <button id="btn-tour" class="ctrl-btn wide" title="Guided walkthrough">Guided tour</button>
+      <button id="btn-legend" class="ctrl-btn" title="Toggle legend">Legend</button>
+    </div>
+  </header>
+
+  <main id="stage">
+    <svg id="scene" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid meet" aria-label="Datacenter communication visualization"></svg>
+    <div id="tooltip" hidden></div>
+    <aside id="tour-panel" hidden>
+      <div id="tour-head">
+        <span id="tour-progress"></span>
+        <button id="tour-close" title="Close tour">✕</button>
+      </div>
+      <h2 id="tour-title"></h2>
+      <div id="tour-body"></div>
+      <div id="tour-nav">
+        <button id="tour-prev" class="ctrl-btn">← Back</button>
+        <button id="tour-next" class="ctrl-btn primary">Next →</button>
+      </div>
+    </aside>
+    <div id="lies-panel" hidden>
+      <div id="lies-inner">
+        <h2>What this animation lies about</h2>
+        <ul>
+          <li><b>Scale.</b> A frontier cluster has tens of thousands of GPUs, not 64. Everything here is one "pod" standing in for the whole.</li>
+          <li><b>No mixture-of-experts.</b> MoE models add a large all-to-all exchange inside every layer, in both workloads. It is not shown.</li>
+          <li><b>Disaggregation is one design point.</b> Colocated and chunked-prefill serving mix both phases on the same GPUs; those alternatives are not shown.</li>
+          <li><b>Stylized timings.</b> Durations are tuned for legibility, not measured. Real prefills are milliseconds-to-seconds; real training steps vary widely.</li>
+          <li><b>TP as generic shimmer.</b> Tensor-parallel traffic is really a precise per-layer sequence of all-reduces, not a continuous glow.</li>
+          <li><b>Fixed prefill→decode pairing.</b> Real routers pick decode instances by load; here each prefill instance ships KV to a fixed partner for visual clarity.</li>
+          <li><b>No congestion.</b> Links never queue, drop, or interfere. Real fabrics have contention, and topology-aware collectives exist to manage it.</li>
+          <li><b>Training shown un-overlapped.</b> Real frameworks overlap gradient communication with the backward pass, which partially smears the heartbeat — it does not eliminate it.</li>
+        </ul>
+        <button id="lies-close" class="ctrl-btn primary">Close</button>
+      </div>
+    </div>
+    <div id="debug-overlay" hidden></div>
+  </main>
+
+  <script src="vendor/d3.v7.min.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

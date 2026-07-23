@@ -1,0 +1,48 @@
+{
+  "steps": [
+    {
+      "id": "phases",
+      "title": "Two phases, two clusters",
+      "bodyHtml": "Serving an LLM has two very different halves. <b>Prefill</b> reads the whole prompt in one dense, compute-hungry pass. <b>Decode</b> then generates one token at a time, limited by memory bandwidth rather than raw compute. Because their hardware appetites differ, modern serving stacks <b>disaggregate</b> them: the left pool only runs prefills, the right pool only decodes. The bridge between them carries exactly one thing — the KV cache — and we'll follow it shortly. Each of the 8 nodes here is one serving instance: 8 GPUs, 2 pipeline stages, 4-way tensor parallelism.",
+      "highlight": { "servers": ["A0","A1","A2","A3","B0","B1","B2","B3"], "actors": ["poolA","poolB"], "kinds": [] },
+      "pauseTraffic": false
+    },
+    {
+      "id": "inside-instance",
+      "title": "Inside one instance: TP and PP",
+      "bodyHtml": "Watch this single prefill instance. Each row of 4 GPUs is a <b>tensor-parallel group</b>: every layer of the model ends with an all-reduce across the row — the <span class=\"kw-tp\">cyan shimmer</span> on the thick NVLink rails. This is the busiest traffic in the whole building, yet it never leaves the node: <b>NVLink traffic is invisible to the datacenter fabric</b>. The two rows are <b>pipeline stages</b>; the model's layers are split between them, and activations hop from stage 0 to stage 1 as <span class=\"kw-pp\">white pulses</span> on the diagonal link.",
+      "highlight": { "servers": ["A1"], "links": ["nv-A1r0", "nv-A1r1", "pp-A1"], "kinds": ["tp-allreduce", "pp-activation"] },
+      "pauseTraffic": false
+    },
+    {
+      "id": "one-request",
+      "title": "Follow one request end-to-end",
+      "bodyHtml": "Everything else is frozen; one request plays on a loop. A user's prompt hits the <b>router</b>, which tokenizes it and picks a prefill instance. The prefill burst lights up: hot <span class=\"kw-tp\">TP shimmer</span>, <span class=\"kw-pp\">activation hops</span>, and — already — <span class=\"kw-kv\">KV pages streaming out</span> to the decode instance. When prefill finishes, decode takes over: a slower, dimmer, steady rhythm, with a thin <span class=\"kw-token\">green trickle</span> of generated tokens looping back to the router and out to the user. One request, one direction, no coordination with anything else.",
+      "highlight": { "servers": ["A1", "B1"], "actors": ["user", "router", "storage"], "links": ["in-user", "in-r1", "nv-A1r0", "nv-A1r1", "pp-A1", "ip-1", "nv-B1r0", "nv-B1r1", "pp-B1", "ret-1", "st-B"], "kinds": ["request", "tp-allreduce", "pp-activation", "kv-transfer", "token-return", "kv-storage"] },
+      "pauseTraffic": true,
+      "script": "single-request"
+    },
+    {
+      "id": "kv-transfer",
+      "title": "The KV-cache transfer",
+      "bodyHtml": "The only reason these two pools talk at all: prefill produces the <b>KV cache</b> — the model's working memory of the prompt — and decode needs it. Watch the <span class=\"kw-kv\">amber stream</span> on the inter-pool links. Two things matter. It is <b>one-way</b>: KV flows prefill→decode, never back. And it is <b>layerwise-overlapped</b>: transfer begins while prefill is still running, layer by layer, so the smear tracks prefill progress instead of arriving as one lump at the end. Each request produces one such burst, then that link goes quiet.",
+      "highlight": { "linkClasses": ["fabric-interpool"], "kinds": ["kv-transfer"] },
+      "pauseTraffic": false
+    },
+    {
+      "id": "storage",
+      "title": "The storage tier: prefix reuse",
+      "bodyHtml": "Prompts repeat — system prompts, long documents, multi-turn chats. So finished KV caches don't always die. Watch two scripted requests: the first is a <b>cache hit</b> — its prefix KV is <span class=\"kw-storage\">fetched from storage</span> up into the prefill pool, and the prefill burst that follows is visibly shorter. The second request completes and <span class=\"kw-storage\">flushes its KV down</span> to storage for later reuse. The storage tier is bidirectional, but every flow is <b>triggered by an individual request's lifecycle</b> — there is no schedule, no clock, no sweep.",
+      "highlight": { "servers": ["A0", "B2"], "actors": ["storage", "user", "router"], "links": ["st-A", "st-B", "in-user", "in-r0", "in-r2", "nv-A0r0", "nv-A0r1", "nv-A2r0", "nv-A2r1", "ip-0", "ip-2", "nv-B0r0", "nv-B0r1", "nv-B2r0", "nv-B2r1"], "kinds": ["kv-storage", "request", "tp-allreduce", "kv-transfer"] },
+      "pauseTraffic": true,
+      "script": "storage-cycle"
+    },
+    {
+      "id": "no-heartbeat",
+      "title": "Zoom out: no heartbeat",
+      "bodyHtml": "Traffic is back on. Let it run and squint. Requests arrive at random — a Poisson process — and each one marches through its own private lifecycle, indifferent to every other. Pools are busy <b>asynchronously</b>; there is never a moment when all links flash together. Now look at the <b>rhythm strip</b> below: aggregate fabric traffic is ragged, structureless noise. An outside observer measuring this cable plant would see hum, not pulse. Hold that image — then switch to <b>Training</b> mode and run its tour. Also see <a href=\"#\" data-lies>what this animation lies about</a>.",
+      "highlight": null,
+      "pauseTraffic": false
+    }
+  ]
+}
