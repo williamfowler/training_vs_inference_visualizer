@@ -7,6 +7,9 @@ import { requestLifecycle, trainingStep } from './traffic.js';
 function miniRng(seed) { let s = seed; return () => (s = (s * 16807 + 11) % 2147483647) / 2147483647; }
 
 const SCRIPTS = {
+  'prefill-loop': (t) => [0, 2.4, 4.8].flatMap((dt) => requestLifecycle(t + 0.4 + dt, {
+    instance: 1, cacheHit: false, flush: false, promptScale: 0.8, outputScale: 0,
+  })),
   'single-request': (t) => requestLifecycle(t + 0.6, {
     instance: 1, cacheHit: false, flush: true, promptScale: 0.7, outputScale: 0.45,
   }),
@@ -17,7 +20,7 @@ const SCRIPTS = {
   'single-step': (t) => trainingStep(t + 0.6, 7, miniRng(3)),
 };
 
-const SCRIPT_SPAN = { 'single-request': 12, 'storage-cycle': 14, 'single-step': 4.2 };
+const SCRIPT_SPAN = { 'prefill-loop': 7.6, 'single-request': 12, 'storage-cycle': 14, 'single-step': 4.2 };
 
 export async function initWalkthrough(api, ui) {
   const $ = (id) => document.getElementById(id);

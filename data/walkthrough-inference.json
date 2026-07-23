@@ -11,8 +11,9 @@
       "id": "inside-instance",
       "title": "Inside one instance: TP and PP",
       "bodyHtml": "Watch this single prefill instance. Each row of 4 GPUs is a <b>tensor-parallel group</b>: every layer of the model ends with an all-reduce across the row — the <span class=\"kw-tp\">cyan shimmer</span> on the thick NVLink rails. This is the busiest traffic in the whole building, yet it never leaves the node: <b>NVLink traffic is invisible to the datacenter fabric</b>. The two rows are <b>pipeline stages</b>; the model's layers are split between them, and activations hop from stage 0 to stage 1 as <span class=\"kw-pp\">white pulses</span> on the diagonal link.",
-      "highlight": { "servers": ["A1"], "links": ["nv-A1r0", "nv-A1r1", "pp-A1"], "kinds": ["tp-allreduce", "pp-activation"] },
-      "pauseTraffic": false
+      "highlight": { "servers": ["A1"], "links": ["nv-A1r0", "nv-A1r1", "pp-A1"], "kinds": [] },
+      "pauseTraffic": true,
+      "script": "prefill-loop"
     },
     {
       "id": "one-request",

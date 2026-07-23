@@ -113,7 +113,7 @@ html, body {
 
 /* ---------- tour panel ---------- */
 #tour-panel {
-  position: absolute; top: 14px; right: 14px; bottom: 240px; width: 360px;
+  position: absolute; top: 14px; right: 10px; bottom: 240px; width: 330px;
   display: flex; flex-direction: column;
   background: rgba(13, 19, 34, .97);
   border: 1px solid var(--panel-edge); border-radius: 10px;

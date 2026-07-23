@@ -496,8 +496,7 @@ export class Renderer {
     if (linkId !== null) {
       const link = this.linkById.get(linkId);
       const kind = el.getAttribute('data-kind');
-      return this._linkMatches(linkId, link ? link.cls : '', spec) ||
-             (kind && (spec.kinds || []).includes(kind));
+      return this._trafficMatches(kind, linkId, link ? link.cls : '', spec);
     }
     const kind = el.getAttribute('data-kind');
     if (kind) return (spec.kinds || []).includes(kind);
@@ -508,10 +507,17 @@ export class Renderer {
     return (spec.links || []).includes(linkId) || (spec.linkClasses || []).includes(cls);
   }
 
+  // Traffic (flows/pulses): a non-empty kinds list is a hard filter — traffic
+  // of other kinds is dimmed even on highlighted links.
+  _trafficMatches(kind, linkId, cls, spec) {
+    const kinds = spec.kinds || [];
+    if (kind && kinds.length && !kinds.includes(kind)) return false;
+    return this._linkMatches(linkId, cls, spec) || (kind && kinds.includes(kind));
+  }
+
   _applyDimTo(el, { kind, linkId, cls }) {
     const spec = this.highlightSpec;
     if (!spec) { el.classList.remove('dimmed'); return; }
-    const ok = this._linkMatches(linkId, cls, spec) || (spec.kinds || []).includes(kind);
-    el.classList.toggle('dimmed', !ok);
+    el.classList.toggle('dimmed', !this._trafficMatches(kind, linkId, cls, spec));
   }
 }
