@@ -41,7 +41,7 @@ const LEGEND_ITEMS = {
 };
 
 const GPU_BASE_FILL = '#1b2540';
-const RHYTHM_VMAX = 14;         // fixed vertical scale so modes are comparable
+const RHYTHM_VMAX = 22;         // fixed vertical scale so modes are comparable
 const RHYTHM_WINDOW = 30;       // seconds of history shown
 const RHYTHM_DT = 0.1;          // sample spacing (sim seconds)
 
@@ -389,7 +389,7 @@ export class Renderer {
         if (this.rowFillCache.get(row.id) !== fill) {
           this.rowFillCache.set(row.id, fill);
           const rg = this.rowEls.get(row.id);
-          for (const rect of rg.children) rect.setAttribute('fill', fill);
+          for (const rect of rg.children) rect.style.fill = fill;
         }
       }
     }

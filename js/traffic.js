@@ -94,7 +94,8 @@ class InferenceGen {
         promptScale: this.rng(),
         outputScale: this.rng(),
       }));
-      this.nextArrival += -Math.log(1 - this.rng()) / this.rate;
+      // truncated exponential: keeps the Poisson feel but avoids long dead air
+      this.nextArrival += Math.min(3.5, -Math.log(1 - this.rng()) / this.rate);
     }
     return out;
   }
