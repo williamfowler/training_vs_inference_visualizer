@@ -26,50 +26,56 @@ const pulse = (t0, dur, linkId, kind, intensity, dir = 1) =>
 // trickle, with lifecycle-triggered storage traffic. No global sync, ever.
 // ---------------------------------------------------------------------------
 
+// A request occupies "slot" k: prefill instance k%nA, decode instance k%nB,
+// KV link ip-k. Slots range over max(nA, nB) so every node sees traffic even
+// when the pools are different sizes.
 export function requestLifecycle(t, opts) {
-  const { instance: i, cacheHit, flush, promptScale, outputScale } = opts;
+  const { cacheHit, flush, promptScale, outputScale } = opts;
+  const nA = opts.nA ?? 4, nB = opts.nB ?? 4;
+  const k = (opts.slot ?? opts.instance ?? 0) % Math.max(nA, nB);
+  const a = k % nA, b = k % nB;
   const ev = [];
 
   // ingress: user -> router -> prefill instance
   ev.push(pulse(t, 0.15, 'in-user', 'request', 0.7));
-  ev.push(pulse(t + 0.16, 0.2, `in-r${i}`, 'request', 0.7));
+  ev.push(pulse(t + 0.16, 0.2, `in-r${a}`, 'request', 0.7));
 
   let tp = t + 0.4;
   let Dp = (0.4 + 0.8 * promptScale);
   if (cacheHit) {
     // prefix-cache hit: fetch KV from storage first, then a shortened prefill
-    for (let k = 0; k < 3; k++) ev.push(pulse(t + 0.36 + k * 0.12, 0.3, 'st-A', 'kv-storage', 0.55, -1));
+    for (let j = 0; j < 3; j++) ev.push(pulse(t + 0.36 + j * 0.12, 0.3, 'st-A', 'kv-storage', 0.55, -1));
     tp = t + 0.85;
     Dp *= 0.45;
   }
 
   // prefill burst: hot TP shimmer on both stages + pipeline hops
-  ev.push(flow(tp, tp + Dp, `nv-A${i}r0`, 'tp-allreduce', 0.92));
-  ev.push(flow(tp + 0.08, tp + Dp, `nv-A${i}r1`, 'tp-allreduce', 0.88));
-  for (const f of [0.3, 0.55, 0.8]) ev.push(pulse(tp + Dp * f, 0.18, `pp-A${i}`, 'pp-activation', 0.75));
+  ev.push(flow(tp, tp + Dp, `nv-A${a}r0`, 'tp-allreduce', 0.92));
+  ev.push(flow(tp + 0.08, tp + Dp, `nv-A${a}r1`, 'tp-allreduce', 0.88));
+  for (const f of [0.3, 0.55, 0.8]) ev.push(pulse(tp + Dp * f, 0.18, `pp-A${a}`, 'pp-activation', 0.75));
 
   // layerwise KV smear: starts DURING prefill and tracks its progress
   const ks = tp + 0.12 * Dp, ke = tp + Dp + 0.15;
   for (let tk = ks; tk < ke; tk += 0.09) {
     const prog = (tk - ks) / (ke - ks);
-    ev.push(pulse(tk, 0.35, `ip-${i}`, 'kv-transfer', 0.4 + 0.35 * prog));
+    ev.push(pulse(tk, 0.35, `ip-${k}`, 'kv-transfer', 0.4 + 0.35 * prog));
   }
 
   // decode: slower, dimmer, steady — memory-bound texture + token trickle
   const td = tp + Dp + 0.25;
   const Dd = 2 + 6 * outputScale;
-  ev.push(flow(td, td + Dd, `nv-B${i}r0`, 'tp-allreduce', 0.3));
-  ev.push(flow(td, td + Dd, `nv-B${i}r1`, 'tp-allreduce', 0.3));
+  ev.push(flow(td, td + Dd, `nv-B${b}r0`, 'tp-allreduce', 0.3));
+  ev.push(flow(td, td + Dd, `nv-B${b}r1`, 'tp-allreduce', 0.3));
   for (let tk = td + 0.2; tk < td + Dd; tk += 0.3) {
-    ev.push(pulse(tk, 0.55, `ret-${i}`, 'token-return', 0.5));
+    ev.push(pulse(tk, 0.55, `ret-${b}`, 'token-return', 0.5));
   }
   for (let tk = td + 0.3; tk < td + Dd; tk += 0.6) {
-    ev.push(pulse(tk, 0.16, `pp-B${i}`, 'pp-activation', 0.3));
+    ev.push(pulse(tk, 0.16, `pp-B${b}`, 'pp-activation', 0.3));
   }
 
   // lifecycle-triggered storage flush on some completions
   if (flush) {
-    for (let k = 0; k < 4; k++) ev.push(pulse(td + Dd + 0.15 + k * 0.13, 0.35, 'st-B', 'kv-storage', 0.6, 1));
+    for (let j = 0; j < 4; j++) ev.push(pulse(td + Dd + 0.15 + j * 0.13, 0.35, 'st-B', 'kv-storage', 0.6, 1));
   }
   return ev;
 }
@@ -77,7 +83,11 @@ export function requestLifecycle(t, opts) {
 class InferenceGen {
   constructor(params = {}) {
     this.rng = mulberry32(params.seed ?? 42);
-    this.rate = params.rate ?? 0.8;           // mean requests/sec
+    this.nA = params.counts?.nA ?? 4;
+    this.nB = params.counts?.nB ?? 4;
+    this.slots = Math.max(this.nA, this.nB);
+    // mean requests/sec scales with cluster size: constant per-instance load
+    this.rate = params.rate ?? 0.2 * this.slots;
     this.nextArrival = 0.5 + this.rng() * 0.8;
     this.rr = 0;
   }
@@ -85,10 +95,10 @@ class InferenceGen {
     const out = [];
     while (this.nextArrival < untilT) {
       const t = this.nextArrival;
-      const i = this.rr % 4;
+      const k = this.rr % this.slots;
       this.rr++;
       out.push(...requestLifecycle(t, {
-        instance: i,
+        slot: k, nA: this.nA, nB: this.nB,
         cacheHit: this.rng() < 0.25,
         flush: this.rng() < 0.35,
         promptScale: this.rng(),
@@ -109,11 +119,12 @@ class InferenceGen {
 export const STEP_PERIOD = 3.0;
 const FWD_END = 0.9, BWD_END = 2.2, AR_END = 2.7;
 
-export function trainingStep(t0, stepIdx, rng) {
+export function trainingStep(t0, stepIdx, rng, opts = {}) {
+  const R = opts.replicas ?? 4;
   const ev = [];
   const jitter = () => (rng() - 0.5) * 0.06;   // ±30ms — synchronized, not identical
 
-  for (let r = 0; r < 4; r++) {
+  for (let r = 0; r < R; r++) {
     const j = jitter();
     // pipeline for replica r: A rows 0,1 then B rows 0,1
     const rows = [`nv-A${r}r0`, `nv-A${r}r1`, `nv-B${r}r0`, `nv-B${r}r1`];
@@ -141,17 +152,20 @@ export function trainingStep(t0, stepIdx, rng) {
   }
 
   // gradient all-reduce: EVERY inter-replica link, simultaneous, bidirectional.
-  // Deliberately the dominant visual event.
-  const arLinks = ['ip-0', 'ip-1', 'ip-2', 'ip-3', 'dp-A', 'dp-B'];
-  for (const l of arLinks) {
-    ev.push(flow(t0 + BWD_END, t0 + AR_END, l, 'grad-allreduce', 1.0, 0));
-    for (let k = 0; k < 4; k++) {
-      ev.push(pulse(t0 + BWD_END + 0.05 + k * 0.11, 0.22, l, 'grad-allreduce', 0.9, k % 2 ? -1 : 1));
+  // Deliberately the dominant visual event. With DP=1 there is nothing to
+  // reduce across — no gradient exchange happens at all.
+  if (R > 1) {
+    const arLinks = [...Array.from({ length: R }, (_, i) => `ip-${i}`), 'dp-A', 'dp-B'];
+    for (const l of arLinks) {
+      ev.push(flow(t0 + BWD_END, t0 + AR_END, l, 'grad-allreduce', 1.0, 0));
+      for (let k = 0; k < 4; k++) {
+        ev.push(pulse(t0 + BWD_END + 0.05 + k * 0.11, 0.22, l, 'grad-allreduce', 0.9, k % 2 ? -1 : 1));
+      }
     }
   }
 
   // weight update: brief glow on every GPU at once
-  for (const p of ['A', 'B']) for (let n = 0; n < 4; n++) {
+  for (const p of ['A', 'B']) for (let n = 0; n < R; n++) {
     ev.push({ t0: t0 + AR_END + 0.02, t1: t0 + AR_END + 0.22, linkId: `${p}${n}`, dir: 1, kind: 'weight-update', intensity: 1, discrete: false });
   }
 
@@ -168,12 +182,13 @@ export function trainingStep(t0, stepIdx, rng) {
 class TrainingGen {
   constructor(params = {}) {
     this.rng = mulberry32(params.seed ?? 7);
+    this.replicas = params.counts?.nA ?? 4;
     this.step = 0;
   }
   generate(untilT) {
     const out = [];
     while (this.step * STEP_PERIOD < untilT) {
-      out.push(...trainingStep(this.step * STEP_PERIOD + 0.4, this.step, this.rng));
+      out.push(...trainingStep(this.step * STEP_PERIOD + 0.4, this.step, this.rng, { replicas: this.replicas }));
       this.step++;
     }
     return out;

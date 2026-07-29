@@ -24,6 +24,18 @@
         <input id="speed" type="range" min="-2" max="2" step="0.05" value="0" title="Speed">
       </label>
     </div>
+    <div id="cluster-config" title="Cluster size (1–8 nodes per pool)">
+      <div class="cfg-group" id="cfg-inference">
+        <span class="cfg-label">Prefill</span>
+        <button class="cfg-btn" data-count="prefill:-1">−</button><span class="cfg-val" id="val-prefill">4</span><button class="cfg-btn" data-count="prefill:1">+</button>
+        <span class="cfg-label">Decode</span>
+        <button class="cfg-btn" data-count="decode:-1">−</button><span class="cfg-val" id="val-decode">4</span><button class="cfg-btn" data-count="decode:1">+</button>
+      </div>
+      <div class="cfg-group" id="cfg-training" hidden>
+        <span class="cfg-label">Replicas</span>
+        <button class="cfg-btn" data-count="replicas:-1">−</button><span class="cfg-val" id="val-replicas">4</span><button class="cfg-btn" data-count="replicas:1">+</button>
+      </div>
+    </div>
     <div id="topbar-right">
       <button id="btn-tour" class="ctrl-btn wide" title="Guided walkthrough">Guided tour</button>
       <button id="btn-legend" class="ctrl-btn" title="Toggle legend">Legend</button>

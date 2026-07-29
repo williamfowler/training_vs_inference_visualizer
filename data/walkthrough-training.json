@@ -3,21 +3,21 @@
     {
       "id": "same-hardware",
       "title": "Same hardware, different job",
-      "bodyHtml": "Identical racks, identical cables — but now all 64 GPUs serve <b>one job</b>. The cluster is carved by <b>3D parallelism</b>: 4 <b>data-parallel replicas</b> (one per row of nodes), each replica's model split into <b>pipeline stages</b> spanning its left node and its right node, and each stage sharded <b>4-way tensor-parallel</b> within a row. Replica 0 is the top pair of nodes; replica 3 the bottom pair. In inference these pools had different jobs; in training the left/right split is just pipeline depth. The storage tier now holds checkpoints and training data.",
-      "highlight": { "servers": ["A0","A1","A2","A3","B0","B1","B2","B3"], "actors": ["poolA","poolB","storage","router","user"], "kinds": [] },
+      "bodyHtml": "Identical racks, identical cables — but now all {gpusTotal} GPUs serve <b>one job</b>. The cluster is carved by <b>3D parallelism</b>: {replicas} <b>data-parallel replicas</b> (one per row of nodes), each replica's model split into <b>pipeline stages</b> spanning its left node and its right node, and each stage sharded <b>4-way tensor-parallel</b> within a row. {replicaSpread} In inference these pools had different jobs; in training the left/right split is just pipeline depth. The storage tier now holds checkpoints and training data.",
+      "highlight": { "servers": ["*"], "actors": ["poolA","poolB","storage","router","user"], "kinds": [] },
       "pauseTraffic": false
     },
     {
       "id": "waves",
       "title": "Forward and backward waves",
-      "bodyHtml": "Each step begins with the <b>forward pass</b>: <span class=\"kw-pp\">activations sweep left→right</span> through every replica's pipeline, stage by stage, while each active row burns with <span class=\"kw-tp\">TP shimmer</span>. Then the wave reverses: the <b>backward pass</b> sweeps right→left, a little slower, computing gradients. Notice what inference never had: all four replicas move <b>in near-lockstep</b>. They aren't communicating with each other yet — but they are marching to the same drum, because at the end of every step they must meet.",
-      "highlight": { "linkClasses": ["nvlink", "fabric-pp"], "links": ["ip-0","ip-1","ip-2","ip-3"], "servers": ["A0","A1","A2","A3","B0","B1","B2","B3"], "kinds": ["tp-allreduce", "pp-activation"] },
+      "bodyHtml": "Each step begins with the <b>forward pass</b>: <span class=\"kw-pp\">activations sweep left→right</span> through every replica's pipeline, stage by stage, while each active row burns with <span class=\"kw-tp\">TP shimmer</span>. Then the wave reverses: the <b>backward pass</b> sweeps right→left, a little slower, computing gradients. Notice what inference never had: every replica moves <b>in near-lockstep</b>. They aren't communicating with each other yet — but they are marching to the same drum, because at the end of every step they must meet.",
+      "highlight": { "linkClasses": ["nvlink", "fabric-pp"], "links": ["ip-*"], "servers": ["*"], "kinds": ["tp-allreduce", "pp-activation"] },
       "pauseTraffic": false
     },
     {
       "id": "allreduce",
       "title": "The gradient all-reduce",
-      "bodyHtml": "Here is the meeting. Once backward finishes, every replica holds gradients for the <b>same weights</b>, computed on different data — and they must be averaged before anyone can proceed. The <span class=\"kw-grad\">red-orange flash</span> is the <b>gradient all-reduce</b>: every inter-replica link, lit <b>simultaneously and in both directions</b>. It is global — all 64 GPUs participate. It is synchronous — nobody starts the next step until it completes. And it is the single loudest thing this datacenter's fabric ever does, once per step, every step, for months.",
+      "bodyHtml": "Here is the meeting. Once backward finishes, every replica holds gradients for the <b>same weights</b>, computed on different data — and they must be averaged before anyone can proceed. The <span class=\"kw-grad\">red-orange flash</span> is the <b>gradient all-reduce</b>: every inter-replica link, lit <b>simultaneously and in both directions</b>. It is global — all {gpusTotal} GPUs participate. It is synchronous — nobody starts the next step until it completes. And it is the single loudest thing this datacenter's fabric ever does, once per step, every step, for months.",
       "highlight": { "linkClasses": ["fabric-interpool"], "kinds": ["grad-allreduce", "weight-update"] },
       "pauseTraffic": false
     },

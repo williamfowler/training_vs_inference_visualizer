@@ -1,44 +1,53 @@
-// scenegraph.js — builds the full static scene graph: servers, GPUs, links
-// (as SVG path strings + metadata), shared actors, and per-mode labeling.
+// scenegraph.js — builds the full scene graph for a given cluster size:
+// servers, GPUs, links (as SVG path strings + metadata), shared actors, and
+// per-mode labeling. Node counts come from state, never hardcoded.
 
-import { POOL, NODE, GPU, RAIL, ROUTER, USER, STORAGE, nodeY, nodeCY, gpuOffsets, rowCenterY } from './layout.js';
+import { POOL, RAIL, ROUTER, USER, STORAGE, poolLayout, gpuOffsets, rowCenterY } from './layout.js';
+import { PAR, STAGES, DEFAULT_COUNTS } from './config.js';
 
-export function buildScene() {
+// counts: {nA, nB} — nodes in the left and right pool. KV/pipeline pairing is
+// by "slot" k in 0..max(nA,nB)-1: slot k joins A_(k%nA) to B_(k%nB), so both
+// pools stay fully used even when the counts differ.
+export function buildScene(counts) {
+  const { nA, nB } = counts;
+  const nPair = Math.max(nA, nB);
+  const geom = { A: poolLayout(nA), B: poolLayout(nB) };
   const servers = [];
   const links = [];
-  const offs = gpuOffsets();
+  const decor = [];
 
   for (const pool of ['A', 'B']) {
     const px = POOL[pool].x;
-    for (let i = 0; i < NODE.perPool; i++) {
-      const ny = nodeY(i);
+    const g = geom[pool];
+    const offs = gpuOffsets(g);
+    for (let i = 0; i < g.n; i++) {
+      const ny = g.nodeY(i);
       const server = {
         id: `${pool}${i}`, pool, idx: i,
-        x: px, y: ny, w: POOL.w, h: NODE.h,
-        cx: px + POOL.w / 2, cy: ny + NODE.h / 2,
+        x: px, y: ny, w: POOL.w, h: g.h,
+        cx: px + POOL.w / 2, cy: g.nodeCY(i),
         rows: [],
       };
-      for (let r = 0; r < 2; r++) {
-        const rowTop = ny + (r === 0 ? GPU.row0dy : GPU.row1dy);
-        const rcy = rowCenterY(ny, r);
+      for (let r = 0; r < PAR.rowsPerNode; r++) {
+        const rowTop = ny + (r === 0 ? g.row0dy : g.row1dy);
+        const rcy = rowCenterY(g, ny, r);
         const row = {
           id: `${pool}${i}r${r}`, server: server.id, pool, nodeIdx: i, rowIdx: r,
           y: rowTop, cy: rcy,
-          gpus: offs.map((ox, g) => ({
-            id: `${pool}${i}r${r}g${g}`,
-            x: px + ox, y: rowTop, s: GPU.s,
-            cx: px + ox + GPU.s / 2, cy: rcy,
+          gpus: offs.map((ox, gi) => ({
+            id: `${pool}${i}r${r}g${gi}`,
+            x: px + ox, y: rowTop, s: g.gpuS,
+            cx: px + ox + g.gpuS / 2, cy: rcy,
           })),
         };
         row.x0 = row.gpus[0].cx;
-        row.x1 = row.gpus[GPU.perRow - 1].cx;
+        row.x1 = row.gpus[PAR.tp - 1].cx;
         server.rows.push(row);
       }
       servers.push(server);
 
       // NVLink: thick line spanning each TP row (drawn behind the GPUs)
-      for (let r = 0; r < 2; r++) {
-        const row = server.rows[r];
+      for (const row of server.rows) {
         links.push({
           id: `nv-${row.id}`, cls: 'nvlink', from: row.id, to: row.id,
           d: `M ${row.x0} ${row.cy} L ${row.x1} ${row.cy}`,
@@ -46,39 +55,53 @@ export function buildScene() {
       }
       // Pipeline hand-off inside the node: end of row 0 to start of row 1
       const r0 = server.rows[0], r1 = server.rows[1];
+      const bend = 26 * g.k;
       links.push({
         id: `pp-${server.id}`, cls: 'fabric-pp', from: r0.id, to: r1.id,
-        d: `M ${r0.x1} ${r0.cy} C ${r0.x1 + 26} ${r0.cy + 14}, ${r1.x0 - 26} ${r1.cy - 14}, ${r1.x0} ${r1.cy}`,
+        d: `M ${r0.x1} ${r0.cy} C ${r0.x1 + bend} ${r0.cy + 14 * g.k}, ${r1.x0 - bend} ${r1.cy - 14 * g.k}, ${r1.x0} ${r1.cy}`,
       });
     }
   }
 
-  // Inter-pool fabric bundle: A_i right edge <-> B_i left edge
-  for (let i = 0; i < NODE.perPool; i++) {
-    const cy = nodeCY(i);
+  // Inter-pool fabric: one link per slot, A_(k%nA) right edge <-> B_(k%nB)
+  // left edge. Straight when the endpoints align, a gentle S-curve otherwise.
+  const ipx0 = POOL.A.x + POOL.w, ipx1 = POOL.B.x, midX = (ipx0 + ipx1) / 2;
+  for (let k = 0; k < nPair; k++) {
+    const a = k % nA, b = k % nB;
+    const ya = geom.A.nodeCY(a), yb = geom.B.nodeCY(b);
     links.push({
-      id: `ip-${i}`, cls: 'fabric-interpool', from: `A${i}`, to: `B${i}`,
-      d: `M ${POOL.A.x + POOL.w} ${cy} L ${POOL.B.x} ${cy}`,
+      id: `ip-${k}`, cls: 'fabric-interpool', from: `A${a}`, to: `B${b}`,
+      d: Math.abs(ya - yb) < 1
+        ? `M ${ipx0} ${ya} L ${ipx1} ${yb}`
+        : `M ${ipx0} ${ya} C ${midX} ${ya}, ${midX} ${yb}, ${ipx1} ${yb}`,
     });
   }
 
-  // DP rails: vertical fabric on the outer flank of each pool, linking all nodes
-  const railTop = nodeCY(0), railBot = nodeCY(NODE.perPool - 1);
-  links.push({ id: 'dp-A', cls: 'fabric-interpool', from: 'A0', to: 'A3',
-               d: `M ${RAIL.Ax} ${railTop} L ${RAIL.Ax} ${railBot}`, rail: true });
-  links.push({ id: 'dp-B', cls: 'fabric-interpool', from: 'B0', to: 'B3',
-               d: `M ${RAIL.Bx} ${railTop} L ${RAIL.Bx} ${railBot}`, rail: true });
+  // DP rails: vertical fabric on the outer flank of each pool, linking all
+  // nodes (only meaningful with >1 node in the pool).
+  for (const [pool, railId, rx] of [['A', 'dp-A', RAIL.Ax], ['B', 'dp-B', RAIL.Bx]]) {
+    const g = geom[pool];
+    if (g.n < 2) continue;
+    links.push({
+      id: railId, cls: 'fabric-interpool', from: `${pool}0`, to: `${pool}${g.n - 1}`,
+      d: `M ${rx} ${g.nodeCY(0)} L ${rx} ${g.nodeCY(g.n - 1)}`, rail: true,
+    });
+    const edgeX = pool === 'A' ? POOL.A.x : POOL.B.x + POOL.w;
+    for (let i = 0; i < g.n; i++) {
+      decor.push({ railId, x1: rx, y1: g.nodeCY(i), x2: edgeX, y2: g.nodeCY(i) });
+    }
+  }
 
   // Storage links: one aggregated fabric link per pool down to the storage tier
   const stTop = STORAGE.y + 2;
-  const lastBot = nodeY(NODE.perPool - 1) + NODE.h;
+  const botA = geom.A.bottom, botB = geom.B.bottom;
   links.push({
-    id: 'st-A', cls: 'fabric-storage', from: 'A3', to: 'storage',
-    d: `M ${POOL.A.x + POOL.w - 90} ${lastBot} C ${POOL.A.x + POOL.w - 60} ${lastBot + 40}, ${STORAGE.cx - 60} ${stTop - 36}, ${STORAGE.cx - 34} ${stTop}`,
+    id: 'st-A', cls: 'fabric-storage', from: `A${nA - 1}`, to: 'storage',
+    d: `M ${POOL.A.x + POOL.w - 90} ${botA} C ${POOL.A.x + POOL.w - 60} ${botA + 40}, ${STORAGE.cx - 60} ${stTop - 36}, ${STORAGE.cx - 34} ${stTop}`,
   });
   links.push({
-    id: 'st-B', cls: 'fabric-storage', from: 'B3', to: 'storage',
-    d: `M ${POOL.B.x + 90} ${lastBot} C ${POOL.B.x + 60} ${lastBot + 40}, ${STORAGE.cx + 60} ${stTop - 36}, ${STORAGE.cx + 34} ${stTop}`,
+    id: 'st-B', cls: 'fabric-storage', from: `B${nB - 1}`, to: 'storage',
+    d: `M ${POOL.B.x + 90} ${botB} C ${POOL.B.x + 60} ${botB + 40}, ${STORAGE.cx + 60} ${stTop - 36}, ${STORAGE.cx + 34} ${stTop}`,
   });
 
   // Ingress: user -> router, router -> each pool-A node
@@ -87,8 +110,8 @@ export function buildScene() {
     id: 'in-user', cls: 'fabric-ext', from: 'user', to: 'router',
     d: `M ${USER.cx + USER.r} ${USER.cy} L ${ROUTER.x} ${rMidY}`,
   });
-  for (let i = 0; i < NODE.perPool; i++) {
-    const ty = nodeCY(i);
+  for (let i = 0; i < nA; i++) {
+    const ty = geom.A.nodeCY(i);
     links.push({
       id: `in-r${i}`, cls: 'fabric-ext', from: 'router', to: `A${i}`,
       d: `M ${rRight} ${rMidY} C ${rRight + 38} ${rMidY}, ${POOL.A.x - 38} ${ty}, ${POOL.A.x} ${ty}`,
@@ -97,8 +120,8 @@ export function buildScene() {
 
   // Token return: B_i right edge, up the flank, across the top, into the router
   const rTopX = ROUTER.x + ROUTER.w / 2;
-  for (let i = 0; i < NODE.perPool; i++) {
-    const cy = nodeCY(i);
+  for (let i = 0; i < nB; i++) {
+    const cy = geom.B.nodeCY(i);
     const lane = 1338 + i * 5;          // parallel lanes so returns do not overlap
     const laneY = 26 + i * 5;
     links.push({
@@ -110,7 +133,11 @@ export function buildScene() {
     });
   }
 
-  return { servers, links, actors: { user: USER, router: ROUTER, storage: STORAGE } };
+  return {
+    servers, links, decor,
+    counts: { nA, nB, nPair },
+    actors: { user: USER, router: ROUTER, storage: STORAGE },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -118,8 +145,6 @@ export function buildScene() {
 // every string with a parallelism number in it is derived from PAR/counts so
 // labels can never drift from the actual cluster shape.
 // ---------------------------------------------------------------------------
-
-import { PAR, STAGES, DEFAULT_COUNTS } from './config.js';
 
 export function modeMeta(mode, counts = DEFAULT_COUNTS) {
   return mode === 'training' ? trainingMeta(counts) : inferenceMeta(counts);
@@ -138,7 +163,7 @@ function inferenceMeta(counts) {
     serverTip: (s) => s.pool === 'A'
       ? { name: `Prefill instance ${s.idx}`, role: 'Compute-bound: processes the whole prompt in one dense pass. TP all-reduces on NVLink, activations hop between its two pipeline stages, and KV pages stream out to its decode partner while prefill runs.' }
       : { name: `Decode instance ${s.idx}`, role: 'Memory-bandwidth-bound: generates one token at a time. Low, steady TP traffic on NVLink; a thin trickle of tokens returns to the router.' },
-    rowTip: (r) => ({ name: `TP group — ${r.pool === 'A' ? 'prefill' : 'decode'} instance ${r.nodeIdx}, stage ${r.rowIdx}`, role: '4 GPUs holding one layer-shard each. Every layer requires an all-reduce across this row — it stays on NVLink and never touches the datacenter fabric.' }),
+    rowTip: (r) => ({ name: `TP group — ${r.pool === 'A' ? 'prefill' : 'decode'} instance ${r.nodeIdx}, stage ${r.rowIdx}`, role: `${PAR.tp} GPUs holding one layer-shard each. Every layer requires an all-reduce across this row — it stays on NVLink and never touches the datacenter fabric.` }),
     linkTip: {
       nvlink: { name: 'NVLink (intra-node)', role: 'Carries tensor-parallel all-reduces. Invisible to the datacenter network fabric.' },
       'fabric-pp': { name: 'Pipeline hand-off', role: 'Activations passed from pipeline stage 0 to stage 1 within the instance.' },

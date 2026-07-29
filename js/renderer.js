@@ -2,7 +2,7 @@
 // of it. All continuous animation is driven from a single master clock value
 // passed into frame(); no D3 transitions are used for traffic.
 
-import { VIEW, POOL, NODE, RHYTHM, LEGEND, STORAGE, ROUTER, USER, nodeY } from './layout.js';
+import { POOL, RHYTHM, LEGEND, STORAGE, ROUTER, USER } from './layout.js';
 import { modeMeta } from './scenegraph.js';
 
 export const KIND_COLORS = {
@@ -46,12 +46,20 @@ const RHYTHM_WINDOW = 30;       // seconds of history shown
 const RHYTHM_DT = 0.1;          // sample spacing (sim seconds)
 
 export class Renderer {
-  constructor(svgEl, scene) {
+  constructor(svgEl, scene, counts) {
     this.svg = d3.select(svgEl);
     this.scene = scene;
+    this.counts = counts;         // semantic counts {prefill, decode, replicas}
     this.mode = 'inference';
     this.highlightSpec = null;
 
+    this.rhythm = { samples: [], ghost: null, ghostMode: null, acc: 0, accN: 0, lastT: -Infinity };
+
+    this._resetCaches();
+    this._build();
+  }
+
+  _resetCaches() {
     this.linkById = new Map();
     this.flowEls = new Map();     // `${linkId}|${dir}` -> path element
     this.pulsePool = [];
@@ -60,9 +68,15 @@ export class Renderer {
     this.serverEls = new Map();
     this.rowEls = new Map();
     this.actorEls = {};
+  }
 
-    this.rhythm = { samples: [], ghost: null, ghostMode: null, acc: 0, accN: 0, lastT: -Infinity };
-
+  // Rebuild the whole scene for a new cluster shape. Rhythm history (and any
+  // ghost trace) survives; flow/pulse element caches do not.
+  rebuild(scene, mode, counts) {
+    this.scene = scene;
+    this.mode = mode;
+    this.counts = counts;
+    this._resetCaches();
     this._build();
   }
 
@@ -106,14 +120,12 @@ export class Renderer {
       this.linkById.set(link.id, link);
     }
     // DP rail stubs (decorative short connectors from rail to node edges)
-    for (const [railId, x, poolX] of [['dp-A', 344, POOL.A.x], ['dp-B', 1296, POOL.B.x + POOL.w]]) {
-      for (let i = 0; i < NODE.perPool; i++) {
-        this.gLinks.append('line')
-          .attr('class', 'link-base dimmable')
-          .attr('data-link', railId)
-          .attr('x1', x).attr('x2', poolX)
-          .attr('y1', nodeY(i) + NODE.h / 2).attr('y2', nodeY(i) + NODE.h / 2);
-      }
+    for (const stub of this.scene.decor) {
+      this.gLinks.append('line')
+        .attr('class', 'link-base dimmable')
+        .attr('data-link', stub.railId)
+        .attr('x1', stub.x1).attr('x2', stub.x2)
+        .attr('y1', stub.y1).attr('y2', stub.y2);
     }
 
     // --- servers + GPUs ---
@@ -146,7 +158,7 @@ export class Renderer {
     // --- actors ---
     this._buildActors();
     this._buildRhythmFrame();
-    this.setMode('inference');
+    this.setMode(this.mode);
   }
 
   _buildActors() {
@@ -194,6 +206,10 @@ export class Renderer {
     this.rhythmGhostLine = g.append('path').attr('class', 'rhythm-ghost-line').attr('stroke', '#66779c').node();
     this.rhythmArea = g.append('path').attr('class', 'rhythm-area').node();
     this.rhythmLine = g.append('path').attr('class', 'rhythm-line').node();
+    if (this.rhythm.ghostMode) {
+      d3.select(this.rhythmGhostLabel)
+        .text(`ghost: previous ${this.rhythm.ghostMode} trace (for comparison)`);
+    }
   }
 
   // --------------------------------------------------------------- mode/labels

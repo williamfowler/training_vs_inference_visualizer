@@ -50,13 +50,14 @@ function parseArgs(argv) {
 }
 
 async function capture(page, spec) {
-  const { mode = 'inference', t = 0, step = null, thenMode = null, t2 = 0, out, debug } = spec;
+  const { mode = 'inference', t = 0, step = null, thenMode = null, t2 = 0, out, debug, counts = null } = spec;
   await page.goto(BASE + (debug ? '?debug' : ''));
   await page.waitForFunction(() => window.__viz !== undefined);
-  await page.evaluate(({ mode, t, step, thenMode, t2 }) => {
+  await page.evaluate(({ mode, t, step, thenMode, t2, counts }) => {
     const viz = window.__viz;
     viz.setPlaying(false);
     if (viz.state.mode !== mode) viz.setMode(mode);
+    if (counts) viz.setCounts(counts);
     if (step !== null) {
       viz.walkthrough.show(step - 1);
       viz.state.playing = false;
@@ -66,7 +67,7 @@ async function capture(page, spec) {
       viz.setMode(thenMode);
       viz.advance(t2);
     }
-  }, { mode, t: Number(t), step: step !== null ? Number(step) : null, thenMode, t2: Number(t2) });
+  }, { mode, t: Number(t), step: step !== null ? Number(step) : null, thenMode, t2: Number(t2), counts });
   await page.waitForTimeout(120);
   await page.screenshot({ path: `screenshots/${out}` });
   console.log(`✓ screenshots/${out}`);
@@ -84,11 +85,20 @@ page.on('console', (msg) => {
 });
 
 if (args.out) {
+  // --counts "prefill=2,decode=5" or "replicas=6"
+  let counts = null;
+  if (typeof args.counts === 'string') {
+    counts = {};
+    for (const kv of args.counts.split(',')) {
+      const [k, v] = kv.split('=');
+      counts[k.trim()] = Number(v);
+    }
+  }
   await capture(page, {
     mode: args.mode, t: args.t ?? 0,
     step: args.step ?? null,
     thenMode: args['then-mode'] ?? null, t2: args.t2 ?? 0,
-    out: args.out, debug: args.debug,
+    out: args.out, debug: args.debug, counts,
   });
 } else {
   // default suite

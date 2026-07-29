@@ -3,8 +3,8 @@
     {
       "id": "phases",
       "title": "Two phases, two clusters",
-      "bodyHtml": "Serving an LLM has two very different halves. <b>Prefill</b> reads the whole prompt in one dense, compute-hungry pass. <b>Decode</b> then generates one token at a time, limited by memory bandwidth rather than raw compute. Because their hardware appetites differ, modern serving stacks <b>disaggregate</b> them: the left pool only runs prefills, the right pool only decodes. The bridge between them carries exactly one thing — the KV cache — and we'll follow it shortly. Each of the 8 nodes here is one serving instance: 8 GPUs, 2 pipeline stages, 4-way tensor parallelism.",
-      "highlight": { "servers": ["A0","A1","A2","A3","B0","B1","B2","B3"], "actors": ["poolA","poolB"], "kinds": [] },
+      "bodyHtml": "Serving an LLM has two very different halves. <b>Prefill</b> reads the whole prompt in one dense, compute-hungry pass. <b>Decode</b> then generates one token at a time, limited by memory bandwidth rather than raw compute. Because their hardware appetites differ, modern serving stacks <b>disaggregate</b> them: the left pool only runs prefills, the right pool only decodes. The bridge between them carries exactly one thing — the KV cache — and we'll follow it shortly. Each of the {nodesTotal} nodes here is one serving instance: 8 GPUs, 2 pipeline stages, 4-way tensor parallelism.",
+      "highlight": { "servers": ["*"], "actors": ["poolA","poolB"], "kinds": [] },
       "pauseTraffic": false
     },
     {

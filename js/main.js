@@ -7,6 +7,7 @@ import { Renderer } from './renderer.js';
 import { makeGenerator } from './traffic.js';
 import { initUI } from './ui.js';
 import { initWalkthrough } from './walkthrough.js';
+import { DEFAULT_COUNTS, COUNT_BOUNDS } from './config.js';
 
 const LOOKAHEAD = 4;          // seconds of traffic generated ahead of the clock
 
@@ -16,6 +17,7 @@ const state = {
   speed: 1,
   playing: true,
   modeStartT: 0,              // sim time when current mode began
+  counts: { ...DEFAULT_COUNTS },
   gen: null,
   genHorizon: 0,              // sim time up to which events exist
   pending: [],                // events sorted by t0, not yet active
@@ -26,15 +28,32 @@ const state = {
   lastStats: { fabricLoad: 0, pulseCount: 0 },
 };
 
-const scene = buildScene();
-const renderer = new Renderer(document.getElementById('scene'), scene);
+// node counts per pool for the current mode's scene
+function countsFor(mode) {
+  return mode === 'training'
+    ? { nA: state.counts.replicas, nB: state.counts.replicas }
+    : { nA: state.counts.prefill, nB: state.counts.decode };
+}
+
+let scene = buildScene(countsFor(state.mode));
+const renderer = new Renderer(document.getElementById('scene'), scene, state.counts);
 
 function resetTraffic() {
-  state.gen = makeGenerator(state.mode, { seed: state.mode === 'training' ? 7 : 42 });
+  state.gen = makeGenerator(state.mode, {
+    seed: state.mode === 'training' ? 7 : 42,
+    counts: countsFor(state.mode),
+  });
   state.genHorizon = state.t;
   state.pending = [];
   state.pendingIdx = 0;
   state.active = [];
+}
+
+function rebuildScene() {
+  scene = buildScene(countsFor(state.mode));
+  api.scene = scene;
+  renderer.rebuild(scene, state.mode, state.counts);
+  resetTraffic();
 }
 
 function setMode(mode) {
@@ -42,10 +61,20 @@ function setMode(mode) {
   renderer.snapshotRhythmAsGhost();
   state.mode = mode;
   state.modeStartT = state.t;
-  renderer.setMode(mode);
-  resetTraffic();
+  rebuildScene();
   ui.onModeChanged(mode);
   walkthrough.onModeChanged(mode);
+}
+
+function setCounts(patch) {
+  const clamp = (v) => Math.max(COUNT_BOUNDS.min, Math.min(COUNT_BOUNDS.max, v | 0));
+  for (const key of ['prefill', 'decode', 'replicas']) {
+    if (patch[key] != null) state.counts[key] = clamp(patch[key]);
+  }
+  state.modeStartT = state.t;
+  rebuildScene();
+  ui.onCountsChanged();
+  walkthrough.refresh();
 }
 
 function ensureTraffic() {
@@ -124,7 +153,7 @@ const debugEl = new URLSearchParams(location.search).has('debug')
 
 const api = {
   state, scene, renderer,
-  setMode,
+  setMode, setCounts, countsFor,
   setSpeed: (v) => { state.speed = v; },
   setPlaying: (v) => { state.playing = v; },
   injectEvents, clearTraffic,

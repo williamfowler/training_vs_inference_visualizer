@@ -1,6 +1,7 @@
 // ui.js — top-bar controls, tooltips, legend toggle, keyboard shortcuts.
 
 import { modeMeta } from './scenegraph.js';
+import { COUNT_BOUNDS } from './config.js';
 
 export function initUI(api) {
   const $ = (id) => document.getElementById(id);
@@ -32,6 +33,26 @@ export function initUI(api) {
   });
 
   btnTour.addEventListener('click', () => api.walkthrough.toggle());
+
+  // ----------------------------------------------- cluster-size steppers
+  const cfgInference = $('cfg-inference'), cfgTraining = $('cfg-training');
+  for (const btn of document.querySelectorAll('.cfg-btn')) {
+    const [key, delta] = btn.getAttribute('data-count').split(':');
+    btn.addEventListener('click', () => {
+      api.setCounts({ [key]: api.state.counts[key] + Number(delta) });
+    });
+  }
+  function onCountsChanged() {
+    for (const key of ['prefill', 'decode', 'replicas']) {
+      const v = api.state.counts[key];
+      $(`val-${key}`).textContent = v;
+      for (const btn of document.querySelectorAll(`[data-count^="${key}:"]`)) {
+        const delta = Number(btn.getAttribute('data-count').split(':')[1]);
+        btn.disabled = (delta < 0 && v <= COUNT_BOUNDS.min) || (delta > 0 && v >= COUNT_BOUNDS.max);
+      }
+    }
+  }
+  onCountsChanged();
 
   // "What this animation lies about" — reachable from the header at any time,
   // and from [data-lies] links inside walkthrough copy.
@@ -106,11 +127,14 @@ export function initUI(api) {
 
   return {
     setPlaying,
+    onCountsChanged,
     onModeChanged(mode) {
       btnInf.classList.toggle('active', mode === 'inference');
       btnTrn.classList.toggle('active', mode === 'training');
       btnInf.setAttribute('aria-selected', String(mode === 'inference'));
       btnTrn.setAttribute('aria-selected', String(mode === 'training'));
+      cfgInference.hidden = mode !== 'inference';
+      cfgTraining.hidden = mode !== 'training';
     },
   };
 }
