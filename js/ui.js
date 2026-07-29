@@ -1,6 +1,6 @@
 // ui.js — top-bar controls, tooltips, legend toggle, keyboard shortcuts.
 
-import { MODE_META } from './scenegraph.js';
+import { modeMeta } from './scenegraph.js';
 
 export function initUI(api) {
   const $ = (id) => document.getElementById(id);
@@ -33,6 +33,19 @@ export function initUI(api) {
 
   btnTour.addEventListener('click', () => api.walkthrough.toggle());
 
+  // "What this animation lies about" — reachable from the header at any time,
+  // and from [data-lies] links inside walkthrough copy.
+  const liesPanel = $('lies-panel');
+  $('btn-lies').addEventListener('click', () => { liesPanel.hidden = false; });
+  document.addEventListener('click', (e) => {
+    if (e.target instanceof Element && e.target.matches('[data-lies]')) {
+      e.preventDefault();
+      liesPanel.hidden = false;
+    }
+  });
+  $('lies-close').addEventListener('click', () => { liesPanel.hidden = true; });
+  liesPanel.addEventListener('click', (e) => { if (e.target === liesPanel) liesPanel.hidden = true; });
+
   document.addEventListener('keydown', (e) => {
     if (e.code === 'Space' && !e.target.matches('input,button')) {
       e.preventDefault();
@@ -46,7 +59,7 @@ export function initUI(api) {
 
   // ----------------------------------------------------------------- tooltips
   function tipFor(el) {
-    const meta = MODE_META[api.state.mode];
+    const meta = modeMeta(api.state.mode, api.state.counts);
     const serverEl = el.closest('[data-server]');
     const rowEl = el.closest('[data-row]');
     if (rowEl) {

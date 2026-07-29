@@ -114,14 +114,23 @@ export function buildScene() {
 }
 
 // ---------------------------------------------------------------------------
-// Per-mode labeling and tooltip metadata. The geometry never changes; the
-// meaning of every component does.
+// Per-mode labeling and tooltip metadata. The geometry never changes meaning;
+// every string with a parallelism number in it is derived from PAR/counts so
+// labels can never drift from the actual cluster shape.
 // ---------------------------------------------------------------------------
 
-export const MODE_META = {
-  inference: {
-    poolA: { title: 'Prefill cluster', sub: 'TP=4 · PP=2 per instance — one instance per node' },
-    poolB: { title: 'Decode cluster', sub: 'TP=4 · PP=2 per instance — one instance per node' },
+import { PAR, STAGES, DEFAULT_COUNTS } from './config.js';
+
+export function modeMeta(mode, counts = DEFAULT_COUNTS) {
+  return mode === 'training' ? trainingMeta(counts) : inferenceMeta(counts);
+}
+
+function inferenceMeta(counts) {
+  const instSub = (n) =>
+    `${n} instance${n === 1 ? '' : 's'} · TP=${PAR.tp} · PP=${PAR.rowsPerNode} per instance — one per node`;
+  return {
+    poolA: { title: 'Prefill cluster', sub: instSub(counts.prefill) },
+    poolB: { title: 'Decode cluster', sub: instSub(counts.decode) },
     user: { label: 'Users', tip: { name: 'Users', role: 'Source of chat/API requests. Arrivals are bursty and uncoordinated (Poisson-like).' } },
     router: { label: 'Router + tokenizer', tip: { name: 'Router + tokenizer', role: 'Tokenizes prompts and dispatches each request to a prefill instance; streams generated tokens back to users.' } },
     storage: { label: 'KV cache pool', tip: { name: 'KV cache storage tier', role: 'Holds evicted / reusable KV prefixes. Fetched on prefix-cache hits before prefill; flushed after some requests finish.' } },
@@ -137,16 +146,26 @@ export const MODE_META = {
       'fabric-storage': { name: 'Storage fabric', role: 'KV prefix fetches (storage → prefill) on cache hits; KV flushes (decode → storage) after some completions.' },
       'fabric-ext': { name: 'Ingress / egress', role: 'Requests in from users via the router; generated tokens trickling back out.' },
     },
-  },
-  training: {
-    poolA: { title: 'Training job — pipeline stages 0–1', sub: 'DP=4 replicas · each replica spans 2 nodes (PP=2) · TP=4 per row' },
-    poolB: { title: 'Training job — pipeline stages 2–3', sub: 'Same job, same step clock — every replica advances in lockstep' },
+  };
+}
+
+function trainingMeta(counts) {
+  const R = counts.replicas;
+  return {
+    poolA: {
+      title: `Training job — pipeline stages ${STAGES.A}`,
+      sub: `DP=${R} replica${R === 1 ? '' : 's'} · PP=${PAR.ppDepth} per replica (${PAR.rowsPerNode} stages/node) · TP=${PAR.tp} per row`,
+    },
+    poolB: { title: `Training job — pipeline stages ${STAGES.B}`, sub: 'Same job, same step clock — every replica advances in lockstep' },
     user: { label: 'Training data shards', tip: { name: 'Training data', role: 'Sharded dataset feeding the job. Batches are prefetched, so this path is quiet compared to the gradient traffic.' } },
     router: { label: 'Training orchestrator', tip: { name: 'Training orchestrator', role: 'Coordinates the global step: launches the job, monitors stragglers, triggers checkpoints. Control-plane only — the heavy traffic is GPU-to-GPU.' } },
     storage: { label: 'Checkpoint / data storage', tip: { name: 'Checkpoint storage', role: 'Receives periodic full-model checkpoints (every ~8 steps here) and serves training data.' } },
-    footnote: 'Row i of the two pools together form data-parallel replica i: stages 0–1 in the left node, stages 2–3 in the right node.',
-    serverTip: (s) => ({ name: `Replica ${s.idx} — ${s.pool === 'A' ? 'pipeline stages 0–1' : 'pipeline stages 2–3'}`, role: 'One pipeline slice of data-parallel replica ' + s.idx + '. Forward activations sweep through it left→right, gradients sweep back right→left, then it joins the global gradient all-reduce.' }),
-    rowTip: (r) => ({ name: `TP group — replica ${r.nodeIdx}, pipeline stage ${(r.pool === 'B' ? 2 : 0) + r.rowIdx}`, role: '4 GPUs sharding this stage\'s layers. TP all-reduces stay on NVLink; everything else this row does is on the shared step clock.' }),
+    footnote: `Row i of the two pools together form data-parallel replica i: local stages ${STAGES.A} in the left node, ${STAGES.B} in the right — PP=${PAR.ppDepth} end to end.`,
+    serverTip: (s) => ({
+      name: `Replica ${s.idx} — pipeline stages ${STAGES[s.pool]} (local)`,
+      role: `Hosts ${PAR.rowsPerNode} of this replica's ${PAR.ppDepth} pipeline stages. Forward activations sweep through it left→right, gradients sweep back right→left, then it joins the global gradient all-reduce.`,
+    }),
+    rowTip: (r) => ({ name: `TP group — replica ${r.nodeIdx}, pipeline stage ${(r.pool === 'B' ? PAR.rowsPerNode : 0) + r.rowIdx} of ${PAR.ppDepth}`, role: `${PAR.tp} GPUs sharding this stage's layers. TP all-reduces stay on NVLink; everything else this row does is on the shared step clock.` }),
     linkTip: {
       nvlink: { name: 'NVLink (intra-node)', role: 'Tensor-parallel all-reduces during forward and backward passes. High intensity, but invisible to the fabric.' },
       'fabric-pp': { name: 'Pipeline link', role: 'Activations forward, gradients backward, between adjacent pipeline stages.' },
@@ -154,5 +173,5 @@ export const MODE_META = {
       'fabric-storage': { name: 'Storage fabric', role: 'Periodic checkpoint writes (every ~8 steps) and training-data reads.' },
       'fabric-ext': { name: 'Control plane', role: 'Orchestrator control traffic — negligible bandwidth, shown for completeness.' },
     },
-  },
-};
+  };
+}

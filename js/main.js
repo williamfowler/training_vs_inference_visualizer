@@ -129,8 +129,15 @@ const api = {
   setPlaying: (v) => { state.playing = v; },
   injectEvents, clearTraffic,
   setTrafficPaused: (v) => {
+    if (v === state.trafficPaused) return;
     state.trafficPaused = v;
-    if (!v) { state.genHorizon = state.t; state.gen && clearTraffic(); }
+    if (!v) {
+      // Resume as a mini restart. The generator's cursor cannot rewind across
+      // the paused gap, so without this the scene sits dead for up to
+      // 2*LOOKAHEAD seconds after closing a tour while the clock catches up.
+      state.modeStartT = state.t;
+      resetTraffic();
+    }
   },
   advance,
 };

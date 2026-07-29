@@ -3,7 +3,7 @@
 // passed into frame(); no D3 transitions are used for traffic.
 
 import { VIEW, POOL, NODE, RHYTHM, LEGEND, STORAGE, ROUTER, USER, nodeY } from './layout.js';
-import { MODE_META } from './scenegraph.js';
+import { modeMeta } from './scenegraph.js';
 
 export const KIND_COLORS = {
   'request':        '#7d9bff',
@@ -199,7 +199,7 @@ export class Renderer {
   // --------------------------------------------------------------- mode/labels
   setMode(mode) {
     this.mode = mode;
-    const meta = MODE_META[mode];
+    const meta = modeMeta(mode, this.counts);
     const gl = this.gLabels;
     gl.selectAll('*').remove();
 

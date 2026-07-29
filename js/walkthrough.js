@@ -26,7 +26,6 @@ export async function initWalkthrough(api, ui) {
   const $ = (id) => document.getElementById(id);
   const panel = $('tour-panel'), title = $('tour-title'), body = $('tour-body');
   const progress = $('tour-progress'), btnPrev = $('tour-prev'), btnNext = $('tour-next');
-  const liesPanel = $('lies-panel');
 
   const data = {};
   for (const mode of ['inference', 'training']) {
@@ -107,11 +106,6 @@ export async function initWalkthrough(api, ui) {
   btnPrev.addEventListener('click', () => wt.prev());
   btnNext.addEventListener('click', () => wt.next());
   $('tour-close').addEventListener('click', () => wt.close());
-  body.addEventListener('click', (e) => {
-    if (e.target.matches('[data-lies]')) { e.preventDefault(); liesPanel.hidden = false; }
-  });
-  $('lies-close').addEventListener('click', () => { liesPanel.hidden = true; });
-  liesPanel.addEventListener('click', (e) => { if (e.target === liesPanel) liesPanel.hidden = true; });
 
   return wt;
 }
