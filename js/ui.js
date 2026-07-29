@@ -2,6 +2,8 @@
 
 import { modeMeta } from './scenegraph.js';
 import { COUNT_BOUNDS } from './config.js';
+import { KIND_COLORS } from './renderer.js';
+import { fmtBytes } from './modelprofile.js';
 
 export function initUI(api) {
   const $ = (id) => document.getElementById(id);
@@ -125,19 +127,65 @@ export function initUI(api) {
     return null;
   }
 
-  sceneEl.addEventListener('mousemove', (e) => {
-    const tip = e.target instanceof Element ? tipFor(e.target) : null;
+  // live per-link traffic estimate: what is on this link *right now*
+  function liveTrafficHtml(link) {
+    const t = api.state.t;
+    const evs = api.state.active.filter((e) => e.linkId === link.id && e.t0 <= t && e.t1 > t);
+    if (!evs.length) return '<div class="tt-live tt-idle">idle right now</div>';
+    // one line per kind; prefer the event with the largest (cumulative) payload
+    const best = new Map();
+    const score = (e) => e.cum ?? e.bytes ?? 0;
+    for (const e of evs) {
+      const cur = best.get(e.kind);
+      if (!cur || score(e) > score(cur)) best.set(e.kind, e);
+    }
+    let html = '';
+    for (const [kind, e] of best) {
+      let line;
+      if (e.cum != null) {
+        line = `≈${fmtBytes(e.cum)} of ${fmtBytes(e.total)} streamed — ${e.note}`;
+      } else if (e.bytes != null) {
+        line = `≈${fmtBytes(e.bytes)} — ${e.note || kind}`;
+        if (!e.discrete && e.bytes >= 1e6) {
+          line += ` <span class="tt-rate">(~${fmtBytes(e.bytes / (e.t1 - e.t0))}/s at this stylized pace)</span>`;
+        }
+      } else if (e.note) {
+        line = e.note;
+      } else {
+        continue;
+      }
+      const dot = `<span class="tt-dot" style="background:${KIND_COLORS[kind] || '#8593ad'}"></span>`;
+      html += `<div class="tt-live">${dot}${line}</div>`;
+    }
+    return html || '<div class="tt-live tt-idle">idle right now</div>';
+  }
+
+  let hover = null;   // {el, x, y} — kept so the tooltip can live-refresh
+  function renderTooltip() {
+    const tip = hover && hover.el.isConnected ? tipFor(hover.el) : null;
     if (!tip) { tooltip.hidden = true; return; }
-    tooltip.innerHTML = `<div class="tt-name">${tip.name}</div><div class="tt-role">${tip.role}</div>`;
+    let html = `<div class="tt-name">${tip.name}</div><div class="tt-role">${tip.role}</div>`;
+    const linkEl = hover.el.closest('[data-link]');
+    if (linkEl) {
+      const link = api.renderer.linkById.get(linkEl.getAttribute('data-link'));
+      if (link) html += liveTrafficHtml(link);
+    }
+    tooltip.innerHTML = html;
     tooltip.hidden = false;
     const stage = $('stage').getBoundingClientRect();
-    let x = e.clientX - stage.left + 16, y = e.clientY - stage.top + 14;
+    let x = hover.x - stage.left + 16, y = hover.y - stage.top + 14;
     if (x + 300 > stage.width) x -= 320;
-    if (y + 120 > stage.height) y -= 140;
+    if (y + 150 > stage.height) y -= 170;
     tooltip.style.left = x + 'px';
     tooltip.style.top = y + 'px';
+  }
+  sceneEl.addEventListener('mousemove', (e) => {
+    hover = e.target instanceof Element ? { el: e.target, x: e.clientX, y: e.clientY } : null;
+    renderTooltip();
   });
-  sceneEl.addEventListener('mouseleave', () => { tooltip.hidden = true; });
+  sceneEl.addEventListener('mouseleave', () => { hover = null; tooltip.hidden = true; });
+  // refresh while hovering so streaming estimates (e.g. KV) visibly grow
+  setInterval(() => { if (hover && !tooltip.hidden) renderTooltip(); }, 300);
 
   return {
     setPlaying,

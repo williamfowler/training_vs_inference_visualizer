@@ -16,10 +16,16 @@ function mulberry32(seed) {
   };
 }
 
+import { PAR } from './config.js';
+import { fmtBytes } from './modelprofile.js';
+
 const flow = (t0, t1, linkId, kind, intensity, dir = 1) =>
   ({ t0, t1, linkId, dir, kind, intensity, discrete: false });
 const pulse = (t0, dur, linkId, kind, intensity, dir = 1) =>
   ({ t0, t1: t0 + dur, linkId, dir, kind, intensity, discrete: true });
+// annotate an event with a byte estimate for tooltips: {bytes, note} and, for
+// streaming transfers, {cum, total} (cumulative bytes so far / whole payload)
+const ann = (ev, fields) => Object.assign(ev, fields);
 
 // ---------------------------------------------------------------------------
 // Inference: Poisson arrivals, prefill burst -> layerwise KV smear -> decode
@@ -30,52 +36,81 @@ const pulse = (t0, dur, linkId, kind, intensity, dir = 1) =>
 // KV link ip-k. Slots range over max(nA, nB) so every node sees traffic even
 // when the pools are different sizes.
 export function requestLifecycle(t, opts) {
-  const { cacheHit, flush, promptScale, outputScale } = opts;
+  const { cacheHit, flush, promptScale, outputScale, profile: P } = opts;
   const nA = opts.nA ?? 4, nB = opts.nB ?? 4;
   const k = (opts.slot ?? opts.instance ?? 0) % Math.max(nA, nB);
   const a = k % nA, b = k % nB;
   const ev = [];
 
+  // stylized token counts for this request, used only for byte estimates
+  const promptTokens = Math.round(256 + 3800 * promptScale);
+  const kvTotal = P ? P.kvBytesPerToken * promptTokens : null;
+
   // ingress: user -> router -> prefill instance
-  ev.push(pulse(t, 0.15, 'in-user', 'request', 0.7));
-  ev.push(pulse(t + 0.16, 0.2, `in-r${a}`, 'request', 0.7));
+  ev.push(ann(pulse(t, 0.15, 'in-user', 'request', 0.7),
+    { bytes: promptTokens * 4, note: `prompt (~${promptTokens} tokens) as text` }));
+  ev.push(ann(pulse(t + 0.16, 0.2, `in-r${a}`, 'request', 0.7),
+    { bytes: promptTokens * 4, note: `tokenized prompt (~${promptTokens} tokens) + routing metadata` }));
 
   let tp = t + 0.4;
   let Dp = (0.4 + 0.8 * promptScale);
   if (cacheHit) {
     // prefix-cache hit: fetch KV from storage first, then a shortened prefill
-    for (let j = 0; j < 3; j++) ev.push(pulse(t + 0.36 + j * 0.12, 0.3, 'st-A', 'kv-storage', 0.55, -1));
+    const prefixTokens = Math.round(promptTokens * 0.55);
+    for (let j = 0; j < 3; j++) {
+      ev.push(ann(pulse(t + 0.36 + j * 0.12, 0.3, 'st-A', 'kv-storage', 0.55, -1),
+        P && { bytes: (P.kvBytesPerToken * prefixTokens) / 3, note: `KV prefix fetch (~${prefixTokens} cached tokens)` }));
+    }
     tp = t + 0.85;
     Dp *= 0.45;
   }
 
   // prefill burst: hot TP shimmer on both stages + pipeline hops
-  ev.push(flow(tp, tp + Dp, `nv-A${a}r0`, 'tp-allreduce', 0.92));
-  ev.push(flow(tp + 0.08, tp + Dp, `nv-A${a}r1`, 'tp-allreduce', 0.88));
-  for (const f of [0.3, 0.55, 0.8]) ev.push(pulse(tp + Dp * f, 0.18, `pp-A${a}`, 'pp-activation', 0.75));
+  const tpNote = P && { bytes: P.tpBytesPerTokenLayer, note: 'per token · per layer — TP all-reduce, stays on NVLink' };
+  ev.push(ann(flow(tp, tp + Dp, `nv-A${a}r0`, 'tp-allreduce', 0.92), tpNote));
+  ev.push(ann(flow(tp + 0.08, tp + Dp, `nv-A${a}r1`, 'tp-allreduce', 0.88), tpNote));
+  for (const f of [0.3, 0.55, 0.8]) {
+    ev.push(ann(pulse(tp + Dp * f, 0.18, `pp-A${a}`, 'pp-activation', 0.75),
+      P && { bytes: P.activationBytesPerToken * promptTokens, note: `activation hand-off (~${promptTokens}-token prompt)` }));
+  }
 
   // layerwise KV smear: starts DURING prefill and tracks its progress
   const ks = tp + 0.12 * Dp, ke = tp + Dp + 0.15;
+  const nChunks = Math.max(1, Math.ceil((ke - ks) / 0.09));
+  let chunkIdx = 0;
   for (let tk = ks; tk < ke; tk += 0.09) {
     const prog = (tk - ks) / (ke - ks);
-    ev.push(pulse(tk, 0.35, `ip-${k}`, 'kv-transfer', 0.4 + 0.35 * prog));
+    chunkIdx++;
+    ev.push(ann(pulse(tk, 0.35, `ip-${k}`, 'kv-transfer', 0.4 + 0.35 * prog),
+      P && {
+        bytes: kvTotal / nChunks,
+        cum: (kvTotal * chunkIdx) / nChunks,
+        total: kvTotal,
+        note: `KV pages · ~layer ${Math.max(1, Math.round(prog * P.numLayers))}/${P.numLayers}`,
+      }));
   }
 
   // decode: slower, dimmer, steady — memory-bound texture + token trickle
   const td = tp + Dp + 0.25;
   const Dd = 2 + 6 * outputScale;
-  ev.push(flow(td, td + Dd, `nv-B${b}r0`, 'tp-allreduce', 0.3));
-  ev.push(flow(td, td + Dd, `nv-B${b}r1`, 'tp-allreduce', 0.3));
+  const decNote = P && { bytes: P.tpBytesPerTokenLayer, note: 'per token · per layer — decode TP (memory-bound)' };
+  ev.push(ann(flow(td, td + Dd, `nv-B${b}r0`, 'tp-allreduce', 0.3), decNote));
+  ev.push(ann(flow(td, td + Dd, `nv-B${b}r1`, 'tp-allreduce', 0.3), decNote));
   for (let tk = td + 0.2; tk < td + Dd; tk += 0.3) {
-    ev.push(pulse(tk, 0.55, `ret-${b}`, 'token-return', 0.5));
+    ev.push(ann(pulse(tk, 0.55, `ret-${b}`, 'token-return', 0.5),
+      { note: 'one streamed token — a few bytes, negligible' }));
   }
   for (let tk = td + 0.3; tk < td + Dd; tk += 0.6) {
-    ev.push(pulse(tk, 0.16, `pp-B${b}`, 'pp-activation', 0.3));
+    ev.push(ann(pulse(tk, 0.16, `pp-B${b}`, 'pp-activation', 0.3),
+      P && { bytes: P.activationBytesPerToken, note: 'activation hand-off (1 token)' }));
   }
 
   // lifecycle-triggered storage flush on some completions
   if (flush) {
-    for (let j = 0; j < 4; j++) ev.push(pulse(td + Dd + 0.15 + j * 0.13, 0.35, 'st-B', 'kv-storage', 0.6, 1));
+    for (let j = 0; j < 4; j++) {
+      ev.push(ann(pulse(td + Dd + 0.15 + j * 0.13, 0.35, 'st-B', 'kv-storage', 0.6, 1),
+        P && { bytes: kvTotal / 4, note: `KV flush to storage (~${fmtBytes(kvTotal)} total)` }));
+    }
   }
   return ev;
 }
@@ -83,6 +118,7 @@ export function requestLifecycle(t, opts) {
 class InferenceGen {
   constructor(params = {}) {
     this.rng = mulberry32(params.seed ?? 42);
+    this.profile = params.profile ?? null;
     this.nA = params.counts?.nA ?? 4;
     this.nB = params.counts?.nB ?? 4;
     this.slots = Math.max(this.nA, this.nB);
@@ -98,7 +134,7 @@ class InferenceGen {
       const k = this.rr % this.slots;
       this.rr++;
       out.push(...requestLifecycle(t, {
-        slot: k, nA: this.nA, nB: this.nB,
+        slot: k, nA: this.nA, nB: this.nB, profile: this.profile,
         cacheHit: this.rng() < 0.25,
         flush: this.rng() < 0.35,
         promptScale: this.rng(),
@@ -119,10 +155,17 @@ class InferenceGen {
 export const STEP_PERIOD = 3.0;
 const FWD_END = 0.9, BWD_END = 2.2, AR_END = 2.7;
 
+const MICROBATCH_TOKENS = 4096;   // stylized micro-batch size for byte notes
+
 export function trainingStep(t0, stepIdx, rng, opts = {}) {
   const R = opts.replicas ?? 4;
+  const P = opts.profile;
   const ev = [];
   const jitter = () => (rng() - 0.5) * 0.06;   // ±30ms — synchronized, not identical
+
+  const tpNote = P && { bytes: P.tpBytesPerTokenLayer, note: 'per token · per layer — TP all-reduce, stays on NVLink' };
+  const fwdNote = P && { bytes: P.activationBytesPerToken * MICROBATCH_TOKENS, note: `micro-batch activations (~${MICROBATCH_TOKENS / 1024}k tokens) → next stage` };
+  const bwdNote = P && { bytes: P.activationBytesPerToken * MICROBATCH_TOKENS, note: `activation gradients (~${MICROBATCH_TOKENS / 1024}k tokens) → previous stage` };
 
   for (let r = 0; r < R; r++) {
     const j = jitter();
@@ -133,20 +176,20 @@ export function trainingStep(t0, stepIdx, rng, opts = {}) {
     // forward wave: stages light left->right, shimmer stays on to end of fwd
     for (let k = 0; k < 4; k++) {
       const s = t0 + j + k * 0.19;
-      ev.push(flow(s, t0 + j + FWD_END, rows[k], 'tp-allreduce', 0.95));
+      ev.push(ann(flow(s, t0 + j + FWD_END, rows[k], 'tp-allreduce', 0.95), tpNote));
       if (k < 3) {
-        ev.push(pulse(s + 0.13, 0.13, hops[k], 'pp-activation', 0.9));
-        ev.push(pulse(s + 0.2, 0.13, hops[k], 'pp-activation', 0.7));
+        ev.push(ann(pulse(s + 0.13, 0.13, hops[k], 'pp-activation', 0.9), fwdNote));
+        ev.push(ann(pulse(s + 0.2, 0.13, hops[k], 'pp-activation', 0.7), fwdNote));
       }
     }
     // backward wave: right->left, a little slower (grad w.r.t. activations)
     for (let k = 0; k < 4; k++) {
       const s = t0 + j + FWD_END + k * 0.29;
       const row = rows[3 - k];
-      ev.push(flow(s, t0 + j + BWD_END, row, 'tp-allreduce', 0.85));
+      ev.push(ann(flow(s, t0 + j + BWD_END, row, 'tp-allreduce', 0.85), tpNote));
       if (k < 3) {
-        ev.push(pulse(s + 0.18, 0.16, hops[2 - k], 'pp-activation', 0.85, -1));
-        ev.push(pulse(s + 0.26, 0.16, hops[2 - k], 'pp-activation', 0.65, -1));
+        ev.push(ann(pulse(s + 0.18, 0.16, hops[2 - k], 'pp-activation', 0.85, -1), bwdNote));
+        ev.push(ann(pulse(s + 0.26, 0.16, hops[2 - k], 'pp-activation', 0.65, -1), bwdNote));
       }
     }
   }
@@ -155,9 +198,11 @@ export function trainingStep(t0, stepIdx, rng, opts = {}) {
   // Deliberately the dominant visual event. With DP=1 there is nothing to
   // reduce across — no gradient exchange happens at all.
   if (R > 1) {
+    const gpus = R * PAR.nodesPerReplica * PAR.gpusPerNode;
+    const gradNote = P && { bytes: P.gradBytesTotal, note: `gradient all-reduce — global step, all ${gpus} GPUs` };
     const arLinks = [...Array.from({ length: R }, (_, i) => `ip-${i}`), 'dp-A', 'dp-B'];
     for (const l of arLinks) {
-      ev.push(flow(t0 + BWD_END, t0 + AR_END, l, 'grad-allreduce', 1.0, 0));
+      ev.push(ann(flow(t0 + BWD_END, t0 + AR_END, l, 'grad-allreduce', 1.0, 0), gradNote));
       for (let k = 0; k < 4; k++) {
         ev.push(pulse(t0 + BWD_END + 0.05 + k * 0.11, 0.22, l, 'grad-allreduce', 0.9, k % 2 ? -1 : 1));
       }
@@ -171,8 +216,9 @@ export function trainingStep(t0, stepIdx, rng, opts = {}) {
 
   // periodic checkpoint: pools -> storage
   if (stepIdx % 8 === 7) {
+    const ckNote = P && { bytes: P.checkpointBytes / 2, note: 'checkpoint shard — weights + optimizer state' };
     for (const l of ['st-A', 'st-B']) {
-      ev.push(flow(t0 + AR_END, t0 + AR_END + 0.6, l, 'checkpoint', 0.55, 1));
+      ev.push(ann(flow(t0 + AR_END, t0 + AR_END + 0.6, l, 'checkpoint', 0.55, 1), ckNote));
       for (let k = 0; k < 5; k++) ev.push(pulse(t0 + AR_END + 0.05 + k * 0.12, 0.4, l, 'checkpoint', 0.8, 1));
     }
   }
@@ -182,13 +228,14 @@ export function trainingStep(t0, stepIdx, rng, opts = {}) {
 class TrainingGen {
   constructor(params = {}) {
     this.rng = mulberry32(params.seed ?? 7);
+    this.profile = params.profile ?? null;
     this.replicas = params.counts?.nA ?? 4;
     this.step = 0;
   }
   generate(untilT) {
     const out = [];
     while (this.step * STEP_PERIOD < untilT) {
-      out.push(...trainingStep(this.step * STEP_PERIOD + 0.4, this.step, this.rng, { replicas: this.replicas }));
+      out.push(...trainingStep(this.step * STEP_PERIOD + 0.4, this.step, this.rng, { replicas: this.replicas, profile: this.profile }));
       this.step++;
     }
     return out;

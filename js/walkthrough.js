@@ -11,16 +11,16 @@ function miniRng(seed) { let s = seed; return () => (s = (s * 16807 + 11) % 2147
 // that actually exist at the current cluster size.
 const SCRIPTS = {
   'prefill-loop': (t, c) => [0, 2.4, 4.8].flatMap((dt) => requestLifecycle(t + 0.4 + dt, {
-    slot: c.slot(1), nA: c.nA, nB: c.nB, cacheHit: false, flush: false, promptScale: 0.8, outputScale: 0,
+    slot: c.slot(1), nA: c.nA, nB: c.nB, profile: c.profile, cacheHit: false, flush: false, promptScale: 0.8, outputScale: 0,
   })),
   'single-request': (t, c) => requestLifecycle(t + 0.6, {
-    slot: c.slot(1), nA: c.nA, nB: c.nB, cacheHit: false, flush: true, promptScale: 0.7, outputScale: 0.45,
+    slot: c.slot(1), nA: c.nA, nB: c.nB, profile: c.profile, cacheHit: false, flush: true, promptScale: 0.7, outputScale: 0.45,
   }),
   'storage-cycle': (t, c) => [
-    ...requestLifecycle(t + 0.6, { slot: c.slot(0), nA: c.nA, nB: c.nB, cacheHit: true, flush: false, promptScale: 0.8, outputScale: 0.25 }),
-    ...requestLifecycle(t + 3.2, { slot: c.slot(2), nA: c.nA, nB: c.nB, cacheHit: false, flush: true, promptScale: 0.4, outputScale: 0.3 }),
+    ...requestLifecycle(t + 0.6, { slot: c.slot(0), nA: c.nA, nB: c.nB, profile: c.profile, cacheHit: true, flush: false, promptScale: 0.8, outputScale: 0.25 }),
+    ...requestLifecycle(t + 3.2, { slot: c.slot(2), nA: c.nA, nB: c.nB, profile: c.profile, cacheHit: false, flush: true, promptScale: 0.4, outputScale: 0.3 }),
   ],
-  'single-step': (t, c) => trainingStep(t + 0.6, 7, miniRng(3), { replicas: c.nA }),
+  'single-step': (t, c) => trainingStep(t + 0.6, 7, miniRng(3), { replicas: c.nA, profile: c.profile }),
 };
 
 const SCRIPT_SPAN = { 'prefill-loop': 7.6, 'single-request': 12, 'storage-cycle': 14, 'single-step': 4.2 };
@@ -148,7 +148,7 @@ export async function initWalkthrough(api, ui) {
         if (step.script && SCRIPTS[step.script]) {
           const ctx = () => {
             const { nA, nB } = api.countsFor(api.state.mode);
-            return { nA, nB, slot: (i) => Math.min(i, Math.max(nA, nB) - 1) };
+            return { nA, nB, profile: api.state.profile, slot: (i) => Math.min(i, Math.max(nA, nB) - 1) };
           };
           const run = () => api.injectEvents(SCRIPTS[step.script](api.state.t, ctx()));
           run();

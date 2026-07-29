@@ -31,9 +31,26 @@ python3 -m http.server 8000
 the walkthrough JSON is fetched at runtime.
 
 **Controls:** mode toggle (Inference/Training), play/pause (space), speed
-slider (0.25×–4×), **Guided tour** (step-by-step walkthrough with commentary;
-←/→ keys), legend toggle. Hover any component for its role in the current
-mode. Add `?debug` to the URL for a frame-time overlay.
+slider (0.25×–4×), **model-size selector** (8B/70B/400B/1T or custom — drives
+the byte estimates in link tooltips), **cluster-size steppers** (1–8 prefill +
+decode instances in inference, 1–8 data-parallel replicas in training; layout,
+traffic, labels, and tour copy all rescale), **Guided tour** (step-by-step
+walkthrough with commentary; ←/→ keys), legend toggle, and **What this lies
+about**. Hover any component for its role in the current mode; hovering a
+*link* also shows a live byte estimate for whatever is in flight on it right
+now ("≈2.1 GB of 23 GB streamed — KV pages · ~layer 12/127"), or "idle right
+now". Add `?debug` to the URL for a frame-time overlay.
+
+### Byte estimates are order-of-magnitude approximations
+
+`js/modelprofile.js` derives a transformer shape from the chosen parameter
+count using standard scaling heuristics — **not** any published config:
+params ≈ 12·L·H² with L ≈ H/128; KV cache = 2·L·H·2 bytes/token (full
+multi-head attention, no GQA/MLA — real serving stacks are often ~10× smaller);
+gradient all-reduce payload = 2 bytes/param (bf16); checkpoint ≈ 14 bytes/param
+(bf16 weights + fp32 master + Adam moments). The relationships scale correctly
+with model size; individual numbers are illustrative. Rates shown in tooltips
+are per the animation's stylized durations, not real link speeds.
 
 ## Development
 
@@ -52,6 +69,7 @@ node screenshot.mjs    # default suite → screenshots/*.png
 node screenshot.mjs --mode training --t 22.5 --out ar.png
 node screenshot.mjs --mode inference --t 5 --step 3 --out tour3.png
 node screenshot.mjs --mode inference --t 30 --then-mode training --t2 15 --out ghost.png
+node screenshot.mjs --mode training --t 8.6 --counts "replicas=8" --out r8.png
 ```
 
 The harness serves the site, advances the deterministic sim clock headlessly,
