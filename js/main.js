@@ -8,6 +8,7 @@ import { makeGenerator } from './traffic.js';
 import { initUI } from './ui.js';
 import { initWalkthrough } from './walkthrough.js';
 import { DEFAULT_COUNTS, COUNT_BOUNDS } from './config.js';
+import { deriveProfile } from './modelprofile.js';
 
 const LOOKAHEAD = 4;          // seconds of traffic generated ahead of the clock
 
@@ -18,6 +19,8 @@ const state = {
   playing: true,
   modeStartT: 0,              // sim time when current mode began
   counts: { ...DEFAULT_COUNTS },
+  modelParams: 400e9,
+  profile: deriveProfile(400e9),
   gen: null,
   genHorizon: 0,              // sim time up to which events exist
   pending: [],                // events sorted by t0, not yet active
@@ -42,6 +45,7 @@ function resetTraffic() {
   state.gen = makeGenerator(state.mode, {
     seed: state.mode === 'training' ? 7 : 42,
     counts: countsFor(state.mode),
+    profile: state.profile,
   });
   state.genHorizon = state.t;
   state.pending = [];
@@ -151,9 +155,18 @@ const debugEl = new URLSearchParams(location.search).has('debug')
   ? (document.getElementById('debug-overlay').hidden = false, document.getElementById('debug-overlay'))
   : null;
 
+function setModelParams(p) {
+  state.modelParams = p;
+  state.profile = deriveProfile(p);
+  // regenerate upcoming traffic so its byte annotations use the new profile
+  state.modeStartT = state.t;
+  resetTraffic();
+  walkthrough.refresh();
+}
+
 const api = {
   state, scene, renderer,
-  setMode, setCounts, countsFor,
+  setMode, setCounts, countsFor, setModelParams,
   setSpeed: (v) => { state.speed = v; },
   setPlaying: (v) => { state.playing = v; },
   injectEvents, clearTraffic,

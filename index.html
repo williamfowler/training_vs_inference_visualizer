@@ -24,6 +24,17 @@
         <input id="speed" type="range" min="-2" max="2" step="0.05" value="0" title="Speed">
       </label>
     </div>
+    <label id="model-wrap" title="Model size — drives the byte estimates in link tooltips">
+      <span class="cfg-label">Model</span>
+      <select id="model-size">
+        <option value="8e9">8B</option>
+        <option value="70e9">70B</option>
+        <option value="400e9" selected>400B</option>
+        <option value="1e12">1T</option>
+        <option value="custom">Custom…</option>
+      </select>
+      <input id="model-custom" type="number" min="0.5" max="20000" step="0.5" value="400" hidden> <span id="model-custom-unit" hidden>B params</span>
+    </label>
     <div id="cluster-config" title="Cluster size (1–8 nodes per pool)">
       <div class="cfg-group" id="cfg-inference">
         <span class="cfg-label">Prefill</span>

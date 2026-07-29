@@ -34,6 +34,20 @@ export function initUI(api) {
 
   btnTour.addEventListener('click', () => api.walkthrough.toggle());
 
+  // ----------------------------------------------- model-size selector
+  const modelSel = $('model-size'), modelCustom = $('model-custom'), modelUnit = $('model-custom-unit');
+  modelSel.addEventListener('change', () => {
+    const custom = modelSel.value === 'custom';
+    modelCustom.hidden = modelUnit.hidden = !custom;
+    if (custom) modelCustom.focus();
+    else api.setModelParams(Number(modelSel.value));
+  });
+  modelCustom.addEventListener('change', () => {
+    const billions = Math.max(0.5, Math.min(20000, Number(modelCustom.value) || 400));
+    modelCustom.value = billions;
+    api.setModelParams(billions * 1e9);
+  });
+
   // ----------------------------------------------- cluster-size steppers
   const cfgInference = $('cfg-inference'), cfgTraining = $('cfg-training');
   for (const btn of document.querySelectorAll('.cfg-btn')) {

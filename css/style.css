@@ -62,6 +62,20 @@ html, body {
 
 #topbar-right { margin-left: auto; display: flex; gap: 10px; }
 
+/* model-size selector */
+#model-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-dim); }
+#model-size {
+  background: #16203a; color: var(--ink);
+  border: 1px solid var(--panel-edge); border-radius: 6px;
+  font-size: 13px; padding: 5px 6px; cursor: pointer;
+}
+#model-custom {
+  width: 64px; background: #16203a; color: var(--ink);
+  border: 1px solid var(--panel-edge); border-radius: 6px;
+  font-size: 13px; padding: 5px 6px;
+}
+#model-custom[hidden], #model-custom-unit[hidden] { display: none; }
+
 /* cluster-size steppers */
 #cluster-config { display: flex; align-items: center; }
 .cfg-group { display: flex; align-items: center; gap: 5px; }
