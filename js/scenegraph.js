@@ -41,17 +41,20 @@ export function buildScene(counts) {
           })),
         };
         row.x0 = row.gpus[0].cx;
-        row.x1 = row.gpus[PAR.tp - 1].cx;
+        row.x1 = row.gpus[row.gpus.length - 1].cx;
         server.rows.push(row);
       }
       servers.push(server);
 
-      // NVLink: thick line spanning each TP row (drawn behind the GPUs)
-      for (const row of server.rows) {
-        links.push({
-          id: `nv-${row.id}`, cls: 'nvlink', from: row.id, to: row.id,
-          d: `M ${row.x0} ${row.cy} L ${row.x1} ${row.cy}`,
-        });
+      // NVLink: thick line spanning each TP row (drawn behind the GPUs).
+      // With TP=1 a row is a single GPU — no all-reduce, no rail.
+      if (PAR.tp > 1) {
+        for (const row of server.rows) {
+          links.push({
+            id: `nv-${row.id}`, cls: 'nvlink', from: row.id, to: row.id,
+            d: `M ${row.x0} ${row.cy} L ${row.x1} ${row.cy}`,
+          });
+        }
       }
       // Pipeline hand-off inside the node: end of row 0 to start of row 1
       const r0 = server.rows[0], r1 = server.rows[1];
@@ -163,7 +166,12 @@ function inferenceMeta(counts) {
     serverTip: (s) => s.pool === 'A'
       ? { name: `Prefill instance ${s.idx}`, role: 'Compute-bound: processes the whole prompt in one dense pass. TP all-reduces on NVLink, activations hop between its two pipeline stages, and KV pages stream out to its decode partner while prefill runs.' }
       : { name: `Decode instance ${s.idx}`, role: 'Memory-bandwidth-bound: generates one token at a time. Low, steady TP traffic on NVLink; a thin trickle of tokens returns to the router.' },
-    rowTip: (r) => ({ name: `TP group — ${r.pool === 'A' ? 'prefill' : 'decode'} instance ${r.nodeIdx}, stage ${r.rowIdx}`, role: `${PAR.tp} GPUs holding one layer-shard each. Every layer requires an all-reduce across this row — it stays on NVLink and never touches the datacenter fabric.` }),
+    rowTip: (r) => ({
+      name: `${PAR.tp > 1 ? 'TP group' : 'Pipeline stage'} — ${r.pool === 'A' ? 'prefill' : 'decode'} instance ${r.nodeIdx}, stage ${r.rowIdx}`,
+      role: PAR.tp > 1
+        ? `${PAR.tp} GPUs holding one layer-shard each. Every layer requires an all-reduce across this row — it stays on NVLink and never touches the datacenter fabric.`
+        : 'A single GPU — at this model size the whole stage fits in one GPU’s memory, so no tensor parallelism (and no NVLink all-reduce) is needed.',
+    }),
     linkTip: {
       nvlink: { name: 'NVLink (intra-node)', role: 'Carries tensor-parallel all-reduces. Invisible to the datacenter network fabric.' },
       'fabric-pp': { name: 'Pipeline hand-off', role: 'Activations passed from pipeline stage 0 to stage 1 within the instance.' },
@@ -190,7 +198,12 @@ function trainingMeta(counts) {
       name: `Replica ${s.idx} — pipeline stages ${STAGES[s.pool]} (local)`,
       role: `Hosts ${PAR.rowsPerNode} of this replica's ${PAR.ppDepth} pipeline stages. Forward activations sweep through it left→right, gradients sweep back right→left, then it joins the global gradient all-reduce.`,
     }),
-    rowTip: (r) => ({ name: `TP group — replica ${r.nodeIdx}, pipeline stage ${(r.pool === 'B' ? PAR.rowsPerNode : 0) + r.rowIdx} of ${PAR.ppDepth}`, role: `${PAR.tp} GPUs sharding this stage's layers. TP all-reduces stay on NVLink; everything else this row does is on the shared step clock.` }),
+    rowTip: (r) => ({
+      name: `${PAR.tp > 1 ? 'TP group' : 'Pipeline stage'} — replica ${r.nodeIdx}, pipeline stage ${(r.pool === 'B' ? PAR.rowsPerNode : 0) + r.rowIdx} of ${PAR.ppDepth}`,
+      role: PAR.tp > 1
+        ? `${PAR.tp} GPUs sharding this stage's layers. TP all-reduces stay on NVLink; everything else this row does is on the shared step clock.`
+        : 'A single GPU holding this whole stage — the model is small enough that no tensor sharding is needed. Everything it does is on the shared step clock.',
+    }),
     linkTip: {
       nvlink: { name: 'NVLink (intra-node)', role: 'Tensor-parallel all-reduces during forward and backward passes. High intensity, but invisible to the fabric.' },
       'fabric-pp': { name: 'Pipeline link', role: 'Activations forward, gradients backward, between adjacent pipeline stages.' },

@@ -38,6 +38,25 @@ export function deriveProfile(params) {
   };
 }
 
+// --- tensor-parallel width from GPU memory ---------------------------------
+// Inference is the binding constraint: a serving instance splits the model
+// over rowsPerNode (=2) pipeline stages, so one stage's bf16 weight shard is
+// weights/(2·TP) per GPU. TP is the smallest power of two (≤ MAX_TP, one
+// NVLink row) whose shard fits in MEM_BUDGET_FRAC of GPU memory — the rest is
+// headroom for KV cache, activations, and framework overhead. Training divides
+// weights over twice as many stages (PP=4), so anything that fits for
+// inference fits there too.
+export const MEM_BUDGET_FRAC = 0.75;
+export const MAX_TP = 8;
+
+export function deriveTP(weightBytesTotal, gpuMemBytes, stagesPerNode) {
+  const budget = gpuMemBytes * MEM_BUDGET_FRAC;
+  const perStage = weightBytesTotal / stagesPerNode;
+  let tp = 1;
+  while (tp < MAX_TP && perStage / tp > budget) tp *= 2;
+  return { tp, shardBytes: perStage / tp, fits: perStage / tp <= budget };
+}
+
 // "≈2.6 MB" style formatting, 2-3 significant figures
 export function fmtBytes(b) {
   if (b == null || !isFinite(b)) return '?';

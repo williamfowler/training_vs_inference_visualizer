@@ -3,14 +3,14 @@
     {
       "id": "phases",
       "title": "Two phases, two clusters",
-      "bodyHtml": "Serving an LLM has two very different halves. <b>Prefill</b> reads the whole prompt in one dense, compute-hungry pass. <b>Decode</b> then generates one token at a time, limited by memory bandwidth rather than raw compute. Because their hardware appetites differ, modern serving stacks <b>disaggregate</b> them: the left pool only runs prefills, the right pool only decodes. The bridge between them carries exactly one thing — the KV cache — and we'll follow it shortly. Each of the {nodesTotal} nodes here is one serving instance: 8 GPUs, 2 pipeline stages, 4-way tensor parallelism.",
+      "bodyHtml": "Serving an LLM has two very different halves. <b>Prefill</b> reads the whole prompt in one dense, compute-hungry pass. <b>Decode</b> then generates one token at a time, limited by memory bandwidth rather than raw compute. Because their hardware appetites differ, modern serving stacks <b>disaggregate</b> them: the left pool only runs prefills, the right pool only decodes. The bridge between them carries exactly one thing — the KV cache — and we'll follow it shortly. Each of the {nodesTotal} nodes here is one serving instance: {instanceShape}.",
       "highlight": { "servers": ["*"], "actors": ["poolA","poolB"], "kinds": [] },
       "pauseTraffic": false
     },
     {
       "id": "inside-instance",
       "title": "Inside one instance: TP and PP",
-      "bodyHtml": "Watch this single prefill instance. Each row of 4 GPUs is a <b>tensor-parallel group</b>: every layer of the model ends with an all-reduce across the row — the <span class=\"kw-tp\">cyan shimmer</span> on the thick NVLink rails. This is the busiest traffic in the whole building, yet it never leaves the node: <b>NVLink traffic is invisible to the datacenter fabric</b>. The two rows are <b>pipeline stages</b>; the model's layers are split between them, and activations hop from stage 0 to stage 1 as <span class=\"kw-pp\">white pulses</span> on the diagonal link.",
+      "bodyHtml": "Watch this single prefill instance. {tpStory} The two rows are <b>pipeline stages</b>; the model's layers are split between them, and activations hop from stage 0 to stage 1 as <span class=\"kw-pp\">white pulses</span> on the diagonal link.",
       "highlight": { "servers": ["A1"], "links": ["nv-A1r0", "nv-A1r1", "pp-A1"], "kinds": [] },
       "pauseTraffic": true,
       "script": "prefill-loop"

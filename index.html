@@ -24,7 +24,11 @@
         <input id="speed" type="range" min="-2" max="2" step="0.05" value="0" title="Speed">
       </label>
     </div>
-    <label id="model-wrap" title="Model size — drives the byte estimates in link tooltips">
+    <label id="gpu-wrap" title="GPU model — its memory capacity determines the tensor-parallel width">
+      <span class="cfg-label">GPU</span>
+      <select id="gpu-version"></select>
+    </label>
+    <label id="model-wrap" title="Model size — drives the byte estimates in link tooltips and the derived tensor parallelism">
       <span class="cfg-label">Model</span>
       <select id="model-size">
         <option value="8e9">8B</option>
@@ -34,6 +38,7 @@
         <option value="custom">Custom…</option>
       </select>
       <input id="model-custom" type="number" min="0.5" max="20000" step="0.5" value="400" hidden> <span id="model-custom-unit" hidden>B params</span>
+      <span id="tp-readout"></span>
     </label>
     <div id="cluster-config" title="Cluster size (1–8 nodes per pool)">
       <div class="cfg-group" id="cfg-inference">
@@ -73,7 +78,7 @@
       <div id="lies-inner">
         <h2>What this animation lies about</h2>
         <ul>
-          <li><b>Scale.</b> A frontier cluster has tens of thousands of GPUs, not 64. Everything here is one "pod" standing in for the whole.</li>
+          <li><b>Scale.</b> A frontier cluster has tens of thousands of GPUs; the few dozen shown here are one "pod" standing in for the whole.</li>
           <li><b>No mixture-of-experts.</b> MoE models add a large all-to-all exchange inside every layer, in both workloads. It is not shown.</li>
           <li><b>Disaggregation is one design point.</b> Colocated and chunked-prefill serving mix both phases on the same GPUs; those alternatives are not shown.</li>
           <li><b>Stylized timings.</b> Durations are tuned for legibility, not measured. Real prefills are milliseconds-to-seconds; real training steps vary widely.</li>

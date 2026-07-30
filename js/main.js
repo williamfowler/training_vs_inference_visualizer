@@ -7,8 +7,8 @@ import { Renderer } from './renderer.js';
 import { makeGenerator } from './traffic.js';
 import { initUI } from './ui.js';
 import { initWalkthrough } from './walkthrough.js';
-import { DEFAULT_COUNTS, COUNT_BOUNDS } from './config.js';
-import { deriveProfile } from './modelprofile.js';
+import { DEFAULT_COUNTS, COUNT_BOUNDS, PAR, GPU_CATALOG, DEFAULT_GPU, setTensorParallel } from './config.js';
+import { deriveProfile, deriveTP } from './modelprofile.js';
 
 const LOOKAHEAD = 4;          // seconds of traffic generated ahead of the clock
 
@@ -21,6 +21,9 @@ const state = {
   counts: { ...DEFAULT_COUNTS },
   modelParams: 400e9,
   profile: deriveProfile(400e9),
+  gpuId: DEFAULT_GPU,
+  fitsTP: true,               // false when the model exceeds memory even at MAX_TP
+  tpShardBytes: 0,            // per-GPU weight shard at the derived TP
   gen: null,
   genHorizon: 0,              // sim time up to which events exist
   pending: [],                // events sorted by t0, not yet active
@@ -37,6 +40,17 @@ function countsFor(mode) {
     ? { nA: state.counts.replicas, nB: state.counts.replicas }
     : { nA: state.counts.prefill, nB: state.counts.decode };
 }
+
+// derive the tensor-parallel width from the model's weight footprint vs the
+// selected GPU's memory; must run before any scene build
+function applyParallelism() {
+  const gpu = GPU_CATALOG.find((g) => g.id === state.gpuId) || GPU_CATALOG[0];
+  const d = deriveTP(state.profile.weightBytesTotal, gpu.memBytes, PAR.rowsPerNode);
+  state.fitsTP = d.fits;
+  state.tpShardBytes = d.shardBytes;
+  setTensorParallel(d.tp);
+}
+applyParallelism();
 
 let scene = buildScene(countsFor(state.mode));
 const renderer = new Renderer(document.getElementById('scene'), scene, state.counts);
@@ -158,15 +172,33 @@ const debugEl = new URLSearchParams(location.search).has('debug')
 function setModelParams(p) {
   state.modelParams = p;
   state.profile = deriveProfile(p);
-  // regenerate upcoming traffic so its byte annotations use the new profile
+  const prevTp = PAR.tp;
+  applyParallelism();
   state.modeStartT = state.t;
-  resetTraffic();
+  // TP change reshapes the nodes; otherwise just regenerate upcoming traffic
+  // so its byte annotations use the new profile
+  if (PAR.tp !== prevTp) rebuildScene();
+  else resetTraffic();
+  ui.onModelChanged();
+  walkthrough.refresh();
+}
+
+function setGpu(id) {
+  if (!GPU_CATALOG.some((g) => g.id === id)) return;
+  state.gpuId = id;
+  const prevTp = PAR.tp;
+  applyParallelism();
+  if (PAR.tp !== prevTp) {
+    state.modeStartT = state.t;
+    rebuildScene();
+  }
+  ui.onModelChanged();
   walkthrough.refresh();
 }
 
 const api = {
-  state, scene, renderer,
-  setMode, setCounts, countsFor, setModelParams,
+  state, scene, renderer, PAR,
+  setMode, setCounts, countsFor, setModelParams, setGpu,
   setSpeed: (v) => { state.speed = v; },
   setPlaying: (v) => { state.playing = v; },
   injectEvents, clearTraffic,

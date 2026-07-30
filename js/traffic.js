@@ -27,6 +27,13 @@ const pulse = (t0, dur, linkId, kind, intensity, dir = 1) =>
 // streaming transfers, {cum, total} (cumulative bytes so far / whole payload)
 const ann = (ev, fields) => Object.assign(ev, fields);
 
+// Row activity for rowId like "A1r0": a TP all-reduce shimmer on the row's
+// NVLink rail when TP>1; with TP=1 there is no all-reduce (the stage lives on
+// one GPU), so emit a plain compute glow targeted at the row instead.
+const rowFlow = (t0, t1, rowId, intensity, note) => PAR.tp > 1
+  ? ann(flow(t0, t1, `nv-${rowId}`, 'tp-allreduce', intensity), note)
+  : flow(t0, t1, rowId, 'compute-glow', intensity);
+
 // ---------------------------------------------------------------------------
 // Inference: Poisson arrivals, prefill burst -> layerwise KV smear -> decode
 // trickle, with lifecycle-triggered storage traffic. No global sync, ever.
@@ -67,8 +74,8 @@ export function requestLifecycle(t, opts) {
 
   // prefill burst: hot TP shimmer on both stages + pipeline hops
   const tpNote = P && { bytes: P.tpBytesPerTokenLayer, note: 'per token · per layer — TP all-reduce, stays on NVLink' };
-  ev.push(ann(flow(tp, tp + Dp, `nv-A${a}r0`, 'tp-allreduce', 0.92), tpNote));
-  ev.push(ann(flow(tp + 0.08, tp + Dp, `nv-A${a}r1`, 'tp-allreduce', 0.88), tpNote));
+  ev.push(rowFlow(tp, tp + Dp, `A${a}r0`, 0.92, tpNote));
+  ev.push(rowFlow(tp + 0.08, tp + Dp, `A${a}r1`, 0.88, tpNote));
   for (const f of [0.3, 0.55, 0.8]) {
     ev.push(ann(pulse(tp + Dp * f, 0.18, `pp-A${a}`, 'pp-activation', 0.75),
       P && { bytes: P.activationBytesPerToken * promptTokens, note: `activation hand-off (~${promptTokens}-token prompt)` }));
@@ -94,8 +101,8 @@ export function requestLifecycle(t, opts) {
   const td = tp + Dp + 0.25;
   const Dd = 2 + 6 * outputScale;
   const decNote = P && { bytes: P.tpBytesPerTokenLayer, note: 'per token · per layer — decode TP (memory-bound)' };
-  ev.push(ann(flow(td, td + Dd, `nv-B${b}r0`, 'tp-allreduce', 0.3), decNote));
-  ev.push(ann(flow(td, td + Dd, `nv-B${b}r1`, 'tp-allreduce', 0.3), decNote));
+  ev.push(rowFlow(td, td + Dd, `B${b}r0`, 0.3, decNote));
+  ev.push(rowFlow(td, td + Dd, `B${b}r1`, 0.3, decNote));
   for (let tk = td + 0.2; tk < td + Dd; tk += 0.3) {
     ev.push(ann(pulse(tk, 0.55, `ret-${b}`, 'token-return', 0.5),
       { note: 'one streamed token — a few bytes, negligible' }));
@@ -170,13 +177,13 @@ export function trainingStep(t0, stepIdx, rng, opts = {}) {
   for (let r = 0; r < R; r++) {
     const j = jitter();
     // pipeline for replica r: A rows 0,1 then B rows 0,1
-    const rows = [`nv-A${r}r0`, `nv-A${r}r1`, `nv-B${r}r0`, `nv-B${r}r1`];
+    const rows = [`A${r}r0`, `A${r}r1`, `B${r}r0`, `B${r}r1`];
     const hops = [`pp-A${r}`, `ip-${r}`, `pp-B${r}`];
 
     // forward wave: stages light left->right, shimmer stays on to end of fwd
     for (let k = 0; k < 4; k++) {
       const s = t0 + j + k * 0.19;
-      ev.push(ann(flow(s, t0 + j + FWD_END, rows[k], 'tp-allreduce', 0.95), tpNote));
+      ev.push(rowFlow(s, t0 + j + FWD_END, rows[k], 0.95, tpNote));
       if (k < 3) {
         ev.push(ann(pulse(s + 0.13, 0.13, hops[k], 'pp-activation', 0.9), fwdNote));
         ev.push(ann(pulse(s + 0.2, 0.13, hops[k], 'pp-activation', 0.7), fwdNote));
@@ -186,7 +193,7 @@ export function trainingStep(t0, stepIdx, rng, opts = {}) {
     for (let k = 0; k < 4; k++) {
       const s = t0 + j + FWD_END + k * 0.29;
       const row = rows[3 - k];
-      ev.push(ann(flow(s, t0 + j + BWD_END, row, 'tp-allreduce', 0.85), tpNote));
+      ev.push(rowFlow(s, t0 + j + BWD_END, row, 0.85, tpNote));
       if (k < 3) {
         ev.push(ann(pulse(s + 0.18, 0.16, hops[2 - k], 'pp-activation', 0.85, -1), bwdNote));
         ev.push(ann(pulse(s + 0.26, 0.16, hops[2 - k], 'pp-activation', 0.65, -1), bwdNote));

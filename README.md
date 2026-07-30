@@ -31,12 +31,14 @@ python3 -m http.server 8000
 the walkthrough JSON is fetched at runtime.
 
 **Controls:** mode toggle (Inference/Training), play/pause (space), speed
-slider (0.25×–4×), **model-size selector** (8B/70B/400B/1T or custom — drives
-the byte estimates in link tooltips), **cluster-size steppers** (1–8 prefill +
-decode instances in inference, 1–8 data-parallel replicas in training; layout,
-traffic, labels, and tour copy all rescale), **Guided tour** (step-by-step
-walkthrough with commentary; ←/→ keys), legend toggle, and **What this lies
-about**. Hover any component for its role in the current mode; hovering a
+slider (0.25×–4×), **GPU selector** (NVIDIA B200 for now — its 192 GB HBM3e
+capacity is what the tensor-parallel width is derived from), **model-size
+selector** (8B/70B/400B/1T or custom — drives the byte estimates in link
+tooltips *and* the derived TP, shown as a `→ TP=n` readout), **cluster-size
+steppers** (1–8 prefill + decode instances in inference, 1–8 data-parallel
+replicas in training; layout, traffic, labels, and tour copy all rescale),
+**Guided tour** (step-by-step walkthrough with commentary; ←/→ keys), legend
+toggle, and **What this lies about**. Hover any component for its role in the current mode; hovering a
 *link* also shows a live byte estimate for whatever is in flight on it right
 now ("≈2.1 GB of 23 GB streamed — KV pages · ~layer 12/127"), or "idle right
 now". Add `?debug` to the URL for a frame-time overlay.
@@ -51,6 +53,18 @@ gradient all-reduce payload = 2 bytes/param (bf16); checkpoint ≈ 14 bytes/para
 (bf16 weights + fp32 master + Adam moments). The relationships scale correctly
 with model size; individual numbers are illustrative. Rates shown in tooltips
 are per the animation's stylized durations, not real link speeds.
+
+### Tensor parallelism is derived from GPU memory
+
+The cluster is assumed to be built from **NVIDIA B200s (192 GB HBM3e)**.
+Inference is the binding constraint: each serving instance splits the model
+over 2 pipeline stages, so one stage's bf16 weight shard is `2·params / (2·TP)`
+per GPU. TP is chosen as the smallest power of two (max 8, one NVLink row)
+whose shard fits in 75% of GPU memory — the rest is headroom for KV cache and
+activations. Concretely: 8B and 70B → TP=1 (a whole stage fits on one B200, so
+the NVLink rails sit dark and the tour copy adapts), 400B → TP=4, 1T → TP=8.
+Past ~1.15T params the model no longer fits this fixed pod shape at any TP;
+the `→ TP=8 ⚠` readout flags it.
 
 ## Development
 
@@ -70,6 +84,7 @@ node screenshot.mjs --mode training --t 22.5 --out ar.png
 node screenshot.mjs --mode inference --t 5 --step 3 --out tour3.png
 node screenshot.mjs --mode inference --t 30 --then-mode training --t2 15 --out ghost.png
 node screenshot.mjs --mode training --t 8.6 --counts "replicas=8" --out r8.png
+node screenshot.mjs --mode inference --t 6 --model 1e12 --out tp8.png
 ```
 
 The harness serves the site, advances the deterministic sim clock headlessly,
@@ -91,8 +106,8 @@ git-ignored.)
 
 This is a stylized explainer, not a simulation. Known lies, in order of size:
 
-1. **Scale** — a frontier cluster has tens of thousands of GPUs, not 64.
-   Everything here is one "pod" standing in for the whole.
+1. **Scale** — a frontier cluster has tens of thousands of GPUs; the few
+   dozen here are one "pod" standing in for the whole.
 2. **No mixture-of-experts** — MoE adds a large all-to-all exchange inside
    every layer, in both workloads. Not shown.
 3. **Disaggregation is one design point** — colocated and chunked-prefill

@@ -3,7 +3,7 @@
     {
       "id": "same-hardware",
       "title": "Same hardware, different job",
-      "bodyHtml": "Identical racks, identical cables — but now all {gpusTotal} GPUs serve <b>one job</b>. The cluster is carved by <b>3D parallelism</b>: {replicas} <b>data-parallel replicas</b> (one per row of nodes), each replica's model split into <b>pipeline stages</b> spanning its left node and its right node, and each stage sharded <b>4-way tensor-parallel</b> within a row. {replicaSpread} In inference these pools had different jobs; in training the left/right split is just pipeline depth. The storage tier now holds checkpoints and training data.",
+      "bodyHtml": "Identical racks, identical cables — but now all {gpusTotal} GPUs serve <b>one job</b>. The cluster is carved by <b>3D parallelism</b>: {replicas} <b>data-parallel replicas</b> (one per row of nodes), each replica's model split into <b>pipeline stages</b> spanning its left node and its right node, and {tpShard}. {replicaSpread} In inference these pools had different jobs; in training the left/right split is just pipeline depth. The storage tier now holds checkpoints and training data.",
       "highlight": { "servers": ["*"], "actors": ["poolA","poolB","storage","router","user"], "kinds": [] },
       "pauseTraffic": false
     },

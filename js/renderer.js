@@ -4,10 +4,12 @@
 
 import { POOL, RHYTHM, LEGEND, STORAGE, ROUTER, USER } from './layout.js';
 import { modeMeta } from './scenegraph.js';
+import { PAR } from './config.js';
 
 export const KIND_COLORS = {
   'request':        '#7d9bff',
   'tp-allreduce':   '#22d3ee',
+  'compute-glow':   '#94a3b8',
   'pp-activation':  '#f2f6fc',
   'kv-transfer':    '#fbbf24',
   'kv-storage':     '#a78bfa',
@@ -259,7 +261,10 @@ export class Renderer {
       .attr('x', LEGEND.x).attr('y', LEGEND.y).attr('width', LEGEND.w).attr('height', LEGEND.h).attr('rx', 8);
     g.append('text').attr('class', 'legend-title')
       .attr('x', LEGEND.x + 14).attr('y', LEGEND.y + 24).text('TRAFFIC LEGEND');
-    const items = LEGEND_ITEMS[mode];
+    const items = LEGEND_ITEMS[mode].map(([kind, label]) =>
+      kind === 'tp-allreduce' && PAR.tp === 1
+        ? ['compute-glow', 'On-GPU compute (TP=1 — no all-reduce)']
+        : [kind, label]);
     items.forEach(([kind, label], i) => {
       const y = LEGEND.y + 48 + i * 26;
       const item = g.append('g').attr('class', 'legend-item');
@@ -285,6 +290,13 @@ export class Renderer {
     for (const ev of events) {
       if (ev.kind === 'weight-update') {
         nodeFlash.set(ev.linkId, Math.max(nodeFlash.get(ev.linkId) || 0, ev.intensity));
+        continue;
+      }
+      // TP=1: no NVLink rail exists — the event targets the row id directly
+      // and only tints its (single) GPU.
+      if (ev.kind === 'compute-glow') {
+        const cur = rowGlow.get(ev.linkId);
+        if (!cur || ev.intensity > cur.intensity) rowGlow.set(ev.linkId, ev);
         continue;
       }
       const link = this.linkById.get(ev.linkId);

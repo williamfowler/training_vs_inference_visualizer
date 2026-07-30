@@ -68,10 +68,22 @@ function fillTemplates(html, api) {
   const subs = {
     nodesTotal: nodes,
     gpusTotal: nodes * PAR.gpusPerNode,
+    gpusPerNode: PAR.gpusPerNode,
+    tp: PAR.tp,
     replicas: R,
     replicaSpread: R > 1
       ? `Replica 0 is the top pair of nodes; replica ${R - 1} the bottom pair.`
       : 'The single replica spans the one pair of nodes.',
+    // TP-dependent copy: the tour must stay honest when the derived TP is 1
+    instanceShape: PAR.tp > 1
+      ? `${PAR.gpusPerNode} GPUs, ${PAR.rowsPerNode} pipeline stages, ${PAR.tp}-way tensor parallelism`
+      : `${PAR.gpusPerNode} GPUs, ${PAR.rowsPerNode} pipeline stages — no tensor parallelism, each stage fits on one GPU`,
+    tpStory: PAR.tp > 1
+      ? `Each row of ${PAR.tp} GPUs is a <b>tensor-parallel group</b>: every layer of the model ends with an all-reduce across the row — the <span class="kw-tp">cyan shimmer</span> on the thick NVLink rails. This is the busiest traffic in the whole building, yet it never leaves the node: <b>NVLink traffic is invisible to the datacenter fabric</b>.`
+      : `At this model size each pipeline stage fits on a <b>single GPU</b>, so there is no tensor parallelism and no NVLink all-reduce at all — each row is one GPU glowing with local compute. Pick a bigger model to see the <span class="kw-tp">cyan TP shimmer</span> appear.`,
+    tpShard: PAR.tp > 1
+      ? `each stage sharded <b>${PAR.tp}-way tensor-parallel</b> within a row`
+      : 'each stage small enough to live on a <b>single GPU</b> — no tensor sharding',
   };
   return html.replace(/\{(\w+)\}/g, (whole, key) => (key in subs ? String(subs[key]) : whole));
 }

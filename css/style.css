@@ -62,13 +62,14 @@ html, body {
 
 #topbar-right { margin-left: auto; display: flex; gap: 10px; }
 
-/* model-size selector */
-#model-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-dim); }
-#model-size {
+/* GPU + model-size selectors */
+#gpu-wrap, #model-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-dim); }
+#model-size, #gpu-version {
   background: #16203a; color: var(--ink);
   border: 1px solid var(--panel-edge); border-radius: 6px;
   font-size: 13px; padding: 5px 6px; cursor: pointer;
 }
+#tp-readout { font-size: 12px; font-weight: 600; color: var(--c-tp); white-space: nowrap; cursor: help; }
 #model-custom {
   width: 64px; background: #16203a; color: var(--ink);
   border: 1px solid var(--panel-edge); border-radius: 6px;

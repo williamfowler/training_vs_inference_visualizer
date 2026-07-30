@@ -49,10 +49,12 @@ export function poolLayout(n) {
   };
 }
 
-// GPU left offsets within a node: evenly spread PAR.tp squares
+// GPU left offsets within a node: evenly spread PAR.tp squares (centered
+// single square when TP=1)
 export function gpuOffsets(g) {
   const first = BASE.padX;
   const last = POOL.w - BASE.padX - g.gpuS;
+  if (PAR.tp === 1) return [(first + last) / 2];
   const step = (last - first) / (PAR.tp - 1);
   return Array.from({ length: PAR.tp }, (_, i) => first + i * step);
 }

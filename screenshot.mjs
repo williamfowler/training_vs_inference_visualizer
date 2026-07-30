@@ -50,14 +50,15 @@ function parseArgs(argv) {
 }
 
 async function capture(page, spec) {
-  const { mode = 'inference', t = 0, step = null, thenMode = null, t2 = 0, out, debug, counts = null } = spec;
+  const { mode = 'inference', t = 0, step = null, thenMode = null, t2 = 0, out, debug, counts = null, model = null } = spec;
   await page.goto(BASE + (debug ? '?debug' : ''));
   await page.waitForFunction(() => window.__viz !== undefined);
-  await page.evaluate(({ mode, t, step, thenMode, t2, counts }) => {
+  await page.evaluate(({ mode, t, step, thenMode, t2, counts, model }) => {
     const viz = window.__viz;
     viz.setPlaying(false);
     if (viz.state.mode !== mode) viz.setMode(mode);
     if (counts) viz.setCounts(counts);
+    if (model) viz.setModelParams(Number(model));
     if (step !== null) {
       viz.walkthrough.show(step - 1);
       viz.state.playing = false;
@@ -67,7 +68,7 @@ async function capture(page, spec) {
       viz.setMode(thenMode);
       viz.advance(t2);
     }
-  }, { mode, t: Number(t), step: step !== null ? Number(step) : null, thenMode, t2: Number(t2), counts });
+  }, { mode, t: Number(t), step: step !== null ? Number(step) : null, thenMode, t2: Number(t2), counts, model });
   await page.waitForTimeout(120);
   await page.screenshot({ path: `screenshots/${out}` });
   console.log(`✓ screenshots/${out}`);
@@ -99,6 +100,7 @@ if (args.out) {
     step: args.step ?? null,
     thenMode: args['then-mode'] ?? null, t2: args.t2 ?? 0,
     out: args.out, debug: args.debug, counts,
+    model: args.model ?? null,   // e.g. --model 1e12
   });
 } else {
   // default suite

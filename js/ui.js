@@ -1,9 +1,9 @@
 // ui.js — top-bar controls, tooltips, legend toggle, keyboard shortcuts.
 
 import { modeMeta } from './scenegraph.js';
-import { COUNT_BOUNDS } from './config.js';
+import { COUNT_BOUNDS, GPU_CATALOG } from './config.js';
 import { KIND_COLORS } from './renderer.js';
-import { fmtBytes } from './modelprofile.js';
+import { fmtBytes, MEM_BUDGET_FRAC } from './modelprofile.js';
 
 export function initUI(api) {
   const $ = (id) => document.getElementById(id);
@@ -35,6 +35,26 @@ export function initUI(api) {
   });
 
   btnTour.addEventListener('click', () => api.walkthrough.toggle());
+
+  // ----------------------------------------------- GPU selector + derived TP
+  const gpuSel = $('gpu-version'), tpReadout = $('tp-readout');
+  for (const g of GPU_CATALOG) {
+    const o = document.createElement('option');
+    o.value = g.id;
+    o.textContent = `${g.label} · ${g.memLabel}`;
+    gpuSel.append(o);
+  }
+  gpuSel.value = api.state.gpuId;
+  gpuSel.addEventListener('change', () => api.setGpu(gpuSel.value));
+
+  function onModelChanged() {
+    const gpu = GPU_CATALOG.find((g) => g.id === api.state.gpuId) || GPU_CATALOG[0];
+    tpReadout.textContent = `→ TP=${api.PAR.tp}${api.state.fitsTP ? '' : ' ⚠'}`;
+    tpReadout.title = api.state.fitsTP
+      ? `Derived from GPU memory: each GPU holds a ${fmtBytes(api.state.tpShardBytes)} weight shard, within ${Math.round(MEM_BUDGET_FRAC * 100)}% of the ${gpu.label}'s ${gpu.memLabel} (the rest is headroom for KV cache and activations).`
+      : `Model too large for this pod shape: even at TP=${api.PAR.tp}, each GPU would need ${fmtBytes(api.state.tpShardBytes)} of weights — more than a ${gpu.label} (${gpu.memLabel}) can hold.`;
+  }
+  onModelChanged();
 
   // ----------------------------------------------- model-size selector
   const modelSel = $('model-size'), modelCustom = $('model-custom'), modelUnit = $('model-custom-unit');
@@ -190,6 +210,7 @@ export function initUI(api) {
   return {
     setPlaying,
     onCountsChanged,
+    onModelChanged,
     onModeChanged(mode) {
       btnInf.classList.toggle('active', mode === 'inference');
       btnTrn.classList.toggle('active', mode === 'training');
